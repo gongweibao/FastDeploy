@@ -33,9 +33,10 @@ God Class 是指承担过多职责的类，违反单一职责原则（SRP）。�
 ### 2.2 各类量化指标对比
 
 > **统计口径说明**：
-> - **方法数**：统计目标类中直接定义的方法（`def ` 开头），**不包含**子类或嵌套类的方法
+> - **方法数**：统计目标类中直接定义的方法（`def ` 开头），**不包含**子类或嵌套类的方法，包含 `@property`、`@staticmethod`、`@classmethod` 装饰的方法
 > - **实例变量**：统计 `__init__` 中 `self.xxx = ` 形式的唯一变量名
 > - **行数**：文件总行数（含空行和注释）
+> - **CC 计算**：使用 radon 工具，按方法级别统计，表中"平均CC"为所有方法的加权平均值
 
 | 类名 | 行数 | 方法数 | 实例变量 | 平均CC | 最高CC | MI | 综合评估 |
 |------|------|--------|----------|--------|--------|-----|----------|
@@ -64,14 +65,57 @@ God Class 是指承担过多职责的类，违反单一职责原则（SRP）。�
 
 ### 2.4 GPUModelRunner share_inputs 统计
 
-> GPUModelRunner 的 `share_inputs` 字典是核心数据容器，已验证包含 **81 个唯一字段**。
+> GPUModelRunner 的 `share_inputs`（`InputBatch` 实例）是核心数据容器，已验证包含 **82 个唯一字段**。
 
 ```
 share_inputs 字段统计:
-├── 唯一键数量: 81 个
+├── 唯一键数量: 82 个
 ├── 访问点数量: 414 处
 └── 涉及方法: 几乎所有核心方法
 ```
+
+**按功能分类**:
+
+| 分类 | 字段数 | 典型字段 | 治理建议 |
+|------|--------|----------|----------|
+| 序列长度相关 | 10 | `seq_lens_encoder`, `cu_seqlens_q` | 考虑封装为 `SeqLensInfo` |
+| Token/ID 相关 | 12 | `input_ids`, `next_tokens`, `eos_token_id` | 核心字段，保持现状 |
+| 采样参数相关 | 12 | `top_p`, `top_k`, `temperature` | 考虑封装为 `SamplingParams` |
+| 停止/控制相关 | 8 | `stop_flags`, `max_dec_len` | 核心字段，保持现状 |
+| KV Cache/Block 相关 | 8 | `block_tables`, `caches` | 拆分 KV 管理后随之迁移 |
+| 注意力相关 | 14 | `rope_emb`, `decoder_batch_ids` | 核心字段，保持现状 |
+| 投机解码相关 | 8 | `draft_tokens`, `accept_num` | 拆分投机解码后随之迁移 |
+| 多模态相关 | 2 | `image_features` | 拆分 Vision 后随之迁移 |
+| 思考模式相关 | 3 | `enable_thinking`, `max_think_lens` | 核心字段，保持现状 |
+| 请求管理相关 | 5 | `req_ids`, `num_running_requests` | 核心字段，保持现状 |
+
+### 2.5 子类继承关系
+
+> **重要**：拆分时需同步更新子类，避免破坏继承链。
+
+| 类名 | 子类数量 | 子类列表 | 拆分影响 |
+|------|----------|----------|----------|
+| **GPUModelRunner** | 2 | `DCUModelRunner`, `IluvatarModelRunner` | ⚠️ **高**：需同步更新子类重写方法 |
+| **TokenProcessor** | 1 | `WarmUpTokenProcessor` | 🟡 中：内部子类，影响可控 |
+| EngineService | 0 | - | ✅ 无影响 |
+| PrefixCacheManager | 0 | - | ✅ 无影响 |
+| ResourceManagerV1 | 0 | - | ✅ 无影响 |
+
+**GPUModelRunner 子类详情**:
+- `DCUModelRunner`：`fastdeploy/worker/dcu_model_runner.py:24`
+- `IluvatarModelRunner`：`fastdeploy/worker/iluvatar_model_runner.py:45`
+
+### 2.6 测试覆盖现状
+
+| 类名 | 专用测试文件 | 测试行数 | 覆盖评估 | 目标覆盖率 |
+|------|--------------|----------|----------|------------|
+| GPUModelRunner | `tests/worker/test_gpu_model_runner.py` | ~200 | 🟡 部分覆盖 | 60%→80% |
+| EngineService | `tests/engine/test_common_engine.py` | ~150 | 🟡 部分覆盖 | 50%→70% |
+| PrefixCacheManager | `tests/cache_manager/test_prefix_cache_manager.py` | ~300 | 🟡 部分覆盖 | 55%→75% |
+| ResourceManagerV1 | `tests/engine/test_resource_manager_v1.py` | ~400 | 🟢 较完整 | 70%→85% |
+| TokenProcessor | `tests/output/test_token_processor.py` | ~1300 | 🟢 **最完整** | 80%→90% |
+
+> **说明**：当前无精确覆盖率数据，上述评估基于测试文件代码量和方法覆盖度。重构前需运行 `pytest --cov` 获取基线数据。
 
 ---
 
@@ -94,7 +138,7 @@ share_inputs 字段统计:
 | EngineService | ~2210 | **多职责**：进程管理+IPC通信+控制 | **需要拆分** | [engine_service_phased_refactor.md](engine_service_phased_refactor.md) |
 | PrefixCacheManager | ~2148 | **多职责**：块管理+树管理+进程启动+IPC+存储 | **需要拆分** | [prefix_cache_manager_refactor.md](prefix_cache_manager_refactor.md) |
 | ResourceManagerV1 | ~1472 | **单一职责**：资源调度（内聚） | **类不拆分**，方法重构 | [resource_manager_v1_testability_design.md](resource_manager_v1_testability_design.md) |
-| TokenProcessor | ~1142 | **单一职责**：Token输出处理（内聚） | **类不拆分**，方法重构 | - |
+| TokenProcessor | ~1142 | **单一职责**：Token输出处理（内聚） | **类不拆分**，方法重构 | [token_processor_refactor.md](token_processor_refactor.md) |
 
 ---
 
@@ -225,7 +269,7 @@ EngineService (~520行，协调者 + 控制者)
 | **P0** | GPUModelRunner | **拆分** | 多职责，影响核心路径 | [gpu_model_runner_refactor.md](gpu_model_runner_refactor.md) |
 | **P0** | PrefixCacheManager | **拆分** | 管理进程/IPC等外部资源 | [prefix_cache_manager_refactor.md](prefix_cache_manager_refactor.md) |
 | **P1** | EngineService | **拆分** | 已有重构计划 | [engine_service_phased_refactor.md](engine_service_phased_refactor.md) |
-| **P2** | TokenProcessor | **方法重构** | CC=59，但模块稳定 | - |
+| **P2** | TokenProcessor | **方法重构** | CC=59，但模块稳定 | [token_processor_refactor.md](token_processor_refactor.md) |
 | **P2** | ResourceManagerV1 | **方法重构** | CC=56，职责单一 | [resource_manager_v1_testability_design.md](resource_manager_v1_testability_design.md) |
 
 ---
@@ -258,20 +302,41 @@ EngineService (~520行，协调者 + 控制者)
 |---------|---------|
 | 回归风险 | 重构前确保集成测试覆盖；每个 PR 独立验证 |
 | 性能影响 | 热路径保持内联；拆分后性能基准测试 |
-| 子类兼容 | 保持被覆盖方法签名不变；子类同步更新 |
-| 回滚机制 | 保留旧代码路径，环境变量 `FD_USE_LEGACY_XXX=1` 切换 |
+| 子类兼容 | 保持被覆盖方法签名不变；子类同步更新（见 2.5 节） |
+| 回滚机制 | 保留旧代码路径，环境变量切换（见下表） |
+
+**回滚机制详细说明**:
+
+| 模块 | 环境变量 | 切换粒度 | 保留周期 |
+|------|----------|----------|----------|
+| GPUModelRunner | `FD_USE_LEGACY_VISION=1` | 组件级（Vision 模块） | 2 个版本 |
+| EngineService | `FD_USE_LEGACY_WORKER_MANAGER=1` | 组件级（Worker 管理） | 2 个版本 |
+| PrefixCacheManager | `FD_USE_LEGACY_CACHE_LAUNCHER=1` | 组件级（进程启动） | 2 个版本 |
+
+### 6.4 性能基准要求
+
+> **重构前后必须对比性能**，确保热路径无退化。
+
+| 场景 | 基准指标 | 可接受退化 | 测试命令 |
+|------|----------|------------|----------|
+| Prefill 吞吐 | tokens/s | < 1% | `python benchmark_throughput.py --prefill` |
+| Decode 延迟 | ms/token | < 2% | `python benchmark_latency.py --decode` |
+| KV Cache 操作 | ops/s | < 3% | `pytest tests/cache_manager/ -k perf` |
+| Worker 启动 | 启动时间 | < 5% | 手动验证 |
 
 ---
 
 ## 七、待办事项
 
-| 序号 | 优先级 | 任务 | 状态 | 设计文档 |
-|------|--------|------|------|----------|
-| 1 | P0 | GPUModelRunner Phase 1: VisionFeatureExtractor 抽取 | 🔴 待开始 | [gpu_model_runner_refactor.md](gpu_model_runner_refactor.md) |
-| 2 | P0 | PrefixCacheManager Phase 1: CacheProcessLauncher 抽取 | 🔴 待开始 | [prefix_cache_manager_refactor.md](prefix_cache_manager_refactor.md) |
-| 3 | P1 | EngineService Phase 1: WorkerManager 抽取 | 🔴 待开始 | [engine_service_phased_refactor.md](engine_service_phased_refactor.md) |
-| 4 | P2 | TokenProcessor: `_process_batch_output()` 方法拆分 | 🔴 待开始 | - |
-| 5 | P2 | ResourceManagerV1: `schedule()` 方法拆分 | 🔴 待开始 | - |
+| 序号 | 优先级 | 任务 | Owner | 目标日期 | 状态 | 设计文档 |
+|------|--------|------|-------|----------|------|----------|
+| 1 | P0 | GPUModelRunner Phase 1: VisionFeatureExtractor 抽取 | TBD | TBD | 🔴 待开始 | [gpu_model_runner_refactor.md](gpu_model_runner_refactor.md) |
+| 2 | P0 | PrefixCacheManager Phase 1: CacheProcessLauncher 抽取 | TBD | TBD | 🔴 待开始 | [prefix_cache_manager_refactor.md](prefix_cache_manager_refactor.md) |
+| 3 | P1 | EngineService Phase 1: WorkerManager 抽取 | TBD | TBD | 🔴 待开始 | [engine_service_phased_refactor.md](engine_service_phased_refactor.md) |
+| 4 | P2 | TokenProcessor: `_process_batch_output()` 方法拆分 | TBD | TBD | 🔴 待开始 | [token_processor_refactor.md](token_processor_refactor.md) |
+| 5 | P2 | ResourceManagerV1: `schedule()` 方法拆分 | TBD | TBD | 🔴 待开始 | [resource_manager_v1_testability_design.md](resource_manager_v1_testability_design.md) |
+
+> **说明**：Owner 和目标日期由项目负责人在评审会议后填写。
 
 ---
 
@@ -297,25 +362,27 @@ EngineService (~520行，协调者 + 控制者)
 
 ---
 
-## 九、GitHub Issue 关联
+## 九、GitHub PR/Issue 关联
 
-### 9.1 各 God Class 的 Issue 热度
+### 9.1 各 God Class 的 PR 热度
 
-| 类 | 热度 | 典型 Issue |
-|----|------|------------|
-| GPUModelRunner | 🔴 高 | [#6189](https://github.com/PaddlePaddle/FastDeploy/pull/6189) Refactor execute_model |
-| PrefixCacheManager | 🔴 高 | [#6216](https://github.com/PaddlePaddle/FastDeploy/pull/6216) fix cache manager hang |
-| EngineService | 🟡 中 | [#6037](https://github.com/PaddlePaddle/FastDeploy/pull/6037) Refactor fmq |
-| ResourceManagerV1 | 🟢 低 | [#6215](https://github.com/PaddlePaddle/FastDeploy/pull/6215) 单测补充 |
-| TokenProcessor | 🟢 最低 | 无直接相关 Issue |
+> **说明**：以下链接为相关 Pull Request，反映模块的活跃程度和维护难度。
+
+| 类 | 热度 | 典型 PR | 说明 |
+|----|------|---------|------|
+| GPUModelRunner | 🔴 高 | [PR #6189](https://github.com/PaddlePaddle/FastDeploy/pull/6189) | Refactor execute_model |
+| PrefixCacheManager | 🔴 高 | [PR #6216](https://github.com/PaddlePaddle/FastDeploy/pull/6216) | fix cache manager hang |
+| EngineService | 🟡 中 | [PR #6037](https://github.com/PaddlePaddle/FastDeploy/pull/6037) | Refactor fmq |
+| ResourceManagerV1 | 🟢 低 | [PR #6215](https://github.com/PaddlePaddle/FastDeploy/pull/6215) | 单测补充 |
+| TokenProcessor | 🟢 最低 | - | 无直接相关 PR |
 
 ### 9.2 Hackathon 协同建议
 
-| Issue | 模块 | 建议 |
-|-------|------|------|
-| [#6219](https://github.com/PaddlePaddle/FastDeploy/pull/6219) | prefix_cache_manager.py | **结合重构一起推进** |
-| [#6215](https://github.com/PaddlePaddle/FastDeploy/pull/6215) | resource_manager_v1.py | 可并行推进 |
-| [#6211](https://github.com/PaddlePaddle/FastDeploy/pull/6211) | common_engine.py | 与 EngineService 重构相关 |
+| PR | 模块 | 建议 |
+|----|------|------|
+| [PR #6219](https://github.com/PaddlePaddle/FastDeploy/pull/6219) | prefix_cache_manager.py | **结合重构一起推进** |
+| [PR #6215](https://github.com/PaddlePaddle/FastDeploy/pull/6215) | resource_manager_v1.py | 可并行推进 |
+| [PR #6211](https://github.com/PaddlePaddle/FastDeploy/pull/6211) | common_engine.py | 与 EngineService 重构相关 |
 
 ---
 
@@ -353,3 +420,4 @@ grep -cE "^\s+def " <file.py>
 | EngineService | [engine_service_phased_refactor.md](engine_service_phased_refactor.md) | WorkerManager, ZmqCommunicator 接口设计 |
 | PrefixCacheManager | [prefix_cache_manager_refactor.md](prefix_cache_manager_refactor.md) | CacheProcessLauncher, GPUBlockAllocator 接口设计 |
 | ResourceManagerV1 | [resource_manager_v1_testability_design.md](resource_manager_v1_testability_design.md) | 测试策略设计 |
+| TokenProcessor | [token_processor_refactor.md](token_processor_refactor.md) | `_process_batch_output()` 方法拆分设计 |
