@@ -16,7 +16,7 @@
 
 ## 一、公开方法覆盖情况
 
-根据源代码分析，GPUModelRunner 共有 **32 个公开方法**（不含 `__init__` 和私有方法），测试覆盖情况如下：
+根据源代码分析，GPUModelRunner 共有 **36 个公开方法**（不含 `__init__` 和私有方法），测试覆盖情况如下：
 
 | 方法名 | 测试文件 | 覆盖状态 | 备注 |
 |--------|----------|----------|------|
@@ -25,7 +25,7 @@
 | `only_prefill` | test_gpu_model_runner_public.py | ✅ 完整 | 3个测试用例，含EP mixed role场景 |
 | `only_decode` | test_gpu_model_runner_public.py | ✅ 完整 | 3个测试用例，含EP mixed role场景 |
 | `collect_distributed_status` | test_gpu_model_runner_public_simple.py | ⚠️ 仅签名 | 2个测试用例，只验证返回值非None |
-| `insert_tasks_v1` | test_gpu_model_runner_public.py | ✅ 完整 | 5个测试用例，覆盖prefill/decode/ preempted/mixed任务类型 |
+| `insert_tasks_v1` | test_gpu_model_runner_public.py | ✅ 完整 | 5个测试用例，覆盖prefill/decode/preempted/mixed任务类型 |
 | `insert_prefill_inputs` | test_gpu_model_runner_public_simple.py | ⚠️ 部分覆盖 | 4个测试用例，仅验证flag设置，未验证数据填充 |
 | `get_input_length_list` | test_gpu_model_runner_public.py | ✅ 完整 | 12个测试用例，覆盖多种配置组合 |
 | `get_supported_pooling_tasks` | test_gpu_model_runner_public.py | ✅ 完整 | 5个测试用例，覆盖chunked_prefill场景 |
@@ -38,8 +38,8 @@
 | `vision_encoder_compile` | test_gpu_model_runner_public_simple.py | ⚠️ 仅签名 | 3个测试用例，只验证apply_compile被调用 |
 | `sot_warmup` | test_gpu_model_runner_public_simple.py | ⚠️ 仅签名 | 2个测试用例，只验证update和run_warmup被调用 |
 | `execute_model` | test_gpu_model_runner_public_vision_execute.py | ✅ 完整 | 3个测试用例，覆盖normal/overlap/签名测试 |
-| `execute_model_normal` | test_gpu_model_runner_public_vision_execute.py | ✅ 完整 | 8个测试用例，覆盖speculative/pooling/empty等场景 |
-| `execute_model_overlap` | test_gpu_model_runner_public_vision_execute.py | ✅ 完整 | 4个测试用例，覆盖首调用/ speculative/状态连续性 |
+| `execute_model_normal` | test_gpu_model_runner_public_vision_execute.py | ⚠️ 部分覆盖 | 8个测试用例，但patch了_preprocess_and_execute_model核心方法 |
+| `execute_model_overlap` | test_gpu_model_runner_public_vision_execute.py | ⚠️ 部分覆盖 | 4个测试用例，但patch了_preprocess_and_execute_model核心方法 |
 | `profile_run` | test_gpu_model_runner_public_simple.py | ⚠️ 仅签名 | 2个测试用例，只验证各步骤被调用 |
 | `update_share_input_block_num` | test_gpu_model_runner_public_simple.py | ✅ 完整 | 2个测试用例，覆盖MTP场景 |
 | `cal_theortical_kvcache` | test_gpu_model_runner_public.py | ✅ 完整 | 4个测试用例，覆盖dtype/MLA/MTP场景 |
@@ -50,16 +50,16 @@
 | `update_parameters` | test_gpu_model_runner_public_vision_execute.py | ⚠️ 仅签名 | 4个测试用例，只验证update方法被调用 |
 | `update_weights` | test_gpu_model_runner_public.py | ✅ 完整 | 3个测试用例，覆盖version/rsync_config参数 |
 | `padding_cudagraph_inputs` | test_gpu_model_runner_public_simple.py | ⚠️ 部分覆盖 | 2个测试用例，只验证pad_to_max_seq_len被调用 |
-| `extract_vision_features_ernie` | test_gpu_model_runner_public_vision_execute.py | ⚠️ 仅签名 | 8个测试用例，只验证结果非None |
-| `extract_vision_features_qwen` | test_gpu_model_runner_public_vision_execute.py | ⚠️ 仅签名 | 7个测试用例，只验证结果非None |
-| `extract_vision_features_paddleocr` | test_gpu_model_runner_public_vision_execute.py | ⚠️ 仅签名 | 3个测试用例，只验证结果非None |
-| `extract_vision_features` | test_gpu_model_runner_public_vision_execute.py | ⚠️ 仅签名 | 4个测试用例，只验证结果非None |
-| `prepare_rope3d` | test_gpu_model_runner_public_vision_execute.py | ⚠️ 部分覆盖 | 4个测试用例，只验证rope_emb被准备 |
+| `extract_vision_features_ernie` | test_gpu_model_runner_public_vision_execute.py | ⚠️ 仅签名 | 8个测试用例，只验证结果非None，未验证实际逻辑 |
+| `extract_vision_features_qwen` | test_gpu_model_runner_public_vision_execute.py | ⚠️ 仅签名 | 7个测试用例，只验证结果非None，未验证实际逻辑 |
+| `extract_vision_features_paddleocr` | test_gpu_model_runner_public_vision_execute.py | ⚠️ 仅签名 | 3个测试用例，只验证结果非None，未验证实际逻辑 |
+| `extract_vision_features` | test_gpu_model_runner_public_vision_execute.py | ⚠️ 仅签名 | 4个测试用例，只验证结果非None，未验证实际逻辑 |
+| `prepare_rope3d` | test_gpu_model_runner_public_vision_execute.py | ⚠️ 仅签名 | 4个测试用例，只验证rope_emb被准备，未验证实际逻辑 |
 
 **覆盖统计：**
-- ✅ **完整覆盖**（有实际测试用例，验证逻辑正确性）：13个方法 (约41%)
-- ⚠️ **部分覆盖**（有测试用例但验证不足）：7个方法 (约22%)
-- ⚠️ **仅签名测试**（只验证方法能被调用，未验证逻辑）：12个方法 (约37%)
+- ✅ **完整覆盖**（有实际测试用例，验证逻辑正确性）：12个方法 (约33%)
+- ⚠️ **部分覆盖**（有测试用例但验证不足）：6个方法 (约17%)
+- ⚠️ **仅签名测试**（只验证方法能被调用，未验证逻辑）：18个方法 (约50%)
 - ❌ **未覆盖**：0个方法
 
 ---
@@ -170,90 +170,155 @@
 ### 2.2 未充分覆盖的典型场景和Corner Case
 
 #### 1. 视觉特征提取相关（严重不足）
+
+**extract_vision_features_ernie** (仅签名测试):
 ```python
 # 当前状态: 仅签名测试，断言仅为 assertIsNotNone(result)
 # 缺失场景:
 
-❌ extract_vision_features_ernie:
-   - 实际的Ernie模型特征提取逻辑验证
-   - 不同grid_thw配置下的实际输出验证
-   - 图像embeds为空或异常时的正确处理
-   - encoder_cache的缓存命中/未命中的数据正确性
+❌ 实际的Ernie模型特征提取逻辑验证
+   - vision_model.extract_feature 的调用参数正确性
+   - resampler_model 的调用参数正确性
+   - 图像预处理 (rescale_factor, mean, std) 的正确性
+   - 不同 grid_thw 配置下的实际输出验证
+   - 图像 embeds 为空或异常时的正确处理
+   - encoder_cache 的缓存命中/未命中时的数据正确性
+   - 源码行 2898-2929 的具体逻辑
 
-❌ extract_vision_features_qwen:
-   - 实际的Qwen模型特征提取逻辑验证
-   - 多图输入场景的特征顺序
-   - 图像尺寸变换和裁剪边界情况
-   - 与不同qwen模型配置的适配
+❌ TP (Tensor Parallel) 场景:
+   - 源码行 2919-2923: 当 tensor_parallel_size > 1 时的 scatter 操作
+   - ScatterOp.apply 的正确调用
+   - reshape 操作的正确性
+   - S 和 C 维度的正确处理
 
-❌ extract_vision_features_paddleocr:
-   - 实际的PaddleOCR模型特征提取逻辑
-   - OCR场景的文本-图像联合处理
-   - OCR特定输入格式的验证
-
-❌ prepare_rope3d:
-   - Rope3D缓存未命中时的实际计算
-   - Rope3D缓存命中时的复用
-   - 不同max_tokens_lst和batch_size组合的正确性
-   - 3D视觉场景的实际应用效果
-   - rope_emb的数值正确性验证
+❌ AMP (Auto Mixed Precision) 配置:
+   - amp_black 和 amp_white 列表的使用
+   - auto_cast 的 level="O2" 行为
+   - dtype 转换的正确性 (float32 → bfloat16)
 ```
 
-#### 2. 模型执行核心逻辑（全mock，无验证）
+**extract_vision_features_qwen** (仅签名测试):
 ```python
-# 当前状态: execute_model系列都是patch mock，无真实执行
 # 缺失场景:
 
-❌ execute_model_normal:
-   - 真实模型前向传播（非mock）的输入输出验证
-   - 空输入batch处理 (_execute_empty_input)的调用时机
-   - 实际的prompt logprobs计算结果正确性
-   - pooling模型的执行路径和输出格式
-   - enable_overlap_schedule 时的分支选择
-   - use_cudagraph 时的分支选择
+❌ 实际的Qwen模型特征提取逻辑验证
+   - model.visual.extract_feature 的调用参数正确性
+   - 源码行 2943-2945 的具体逻辑
 
-❌ execute_model_overlap:
-   - 实际的重叠调度时间同步
-   - last_model_output_data的数据正确性
-   - 两次batch之间的真实数据传递
-   - 首次调用时的特殊处理
-   - state continuity 的实际维护
+❌ 多图输入场景的特征顺序
+   - paddle.concat 操作的正确性
+   - grid_thw 的维度匹配
 
-❌ 多模态输入 (enable_mm=True):
-   - 实际图像输入的预处理
-   - 图像features的内存对齐
-   - 图像+文本混合batch的真实执行
-   - _process_mm_features 的正确调用和结果
+❌ 图像尺寸变换和裁剪边界情况
+   - 不同图像尺寸的处理
+   - 边界条件下的正确性
+```
+
+**extract_vision_features_paddleocr** (仅签名测试):
+```python
+# 缺失场景:
+
+❌ 实际的PaddleOCR模型特征提取逻辑
+   - model.visual 的调用参数正确性
+   - model.projector 的调用参数正确性
+   - 源码行 2948-2988 的复杂分支逻辑
+
+❌ FD_ENABLE_MAX_PREFILL 场景:
+   - 源码行 2948-2968 的分支逻辑
+   - vit_position_ids_lst 和 cu_seqlens 的处理
+   - position_ids 的计算逻辑（源码行 2961-2966）
+
+❌ OCR特定输入格式的验证
+   - position_ids 和 cumsum_seqlens 的正确生成
+   - interpolate_pos_encoding 和 use_rope 的效果
+```
+
+#### 2. 模型执行核心逻辑（过度Mock，验证不足）
+
+**execute_model_normal** (部分覆盖但过度Mock):
+```python
+# 当前状态: patch了_preprocess_and_execute_model核心方法
+# 源码关键逻辑 (2232-2240):
+
+❌ 真实模型前向传播（非mock）的输入输出验证
+   - _preprocess_and_execute_model 的实际执行
+   - model() 调用的参数正确性
+   - enable_mm=True 时的 image_features 参数传递 (源码行 2289-2294)
+
+❌ 空输入batch处理 (_execute_empty_input)的调用时机
+   - model_forward_batch 为 None 或空列表时的行为
+   - _execute_empty_input 的实际调用
+
+❌ 实际的prompt logprobs计算结果正确性
+   - _postprocess 返回值的验证
+   - prompt_logprobs_list 的正确生成
+
+❌ speculative_decoding 条件分支:
+   - 源码行 2238: `if model_output_data is not None and not self.speculative_decoding:`
+   - _save_model_output 是否被正确跳过
+
+❌ pooling模型的执行路径和输出格式
+   - 源码行 2834-2868: _pool 方法的实际执行
+   - pooling 模型的特殊处理逻辑
+```
+
+**execute_model_overlap** (部分覆盖但过度Mock):
+```python
+# 当前状态: patch了_preprocess_and_execute_model核心方法
+# 源码关键逻辑 (2246-2265):
+
+❌ 实际的重叠调度时间同步
+   - last_token_num 参数的正确传递 (源码行 2248)
+   - token_num 事件的同步处理 (源码行 2322-2331)
+
+❌ last_model_output_data的数据正确性
+   - 源码行 2252-2255: 上一次批次的输出保存
+   - _save_model_output 的调用条件
+
+❌ 两次batch之间的真实数据传递
+   - 源码行 2261-2264: 状态更新
+   - last_token_num 的正确更新
+
+❌ 首次调用时的特殊处理
+   - 源码行 2252: `if self.last_model_output_data is not None`
+   - 首次调用时不保存的行为
+
+❌ enable_overlap_schedule 分支选择
+   - 源码行 2222-2225: execute_model 中的路由逻辑
 ```
 
 #### 3. 初始化和资源管理（仅签名测试）
+
+**initialize_forward_meta** (仅签名测试):
 ```python
 # 缺失场景:
 
-❌ initialize_forward_meta:
-   - ForwardMeta中各字段的正确初始化值
+❌ ForwardMeta中各字段的正确初始化值
+   - 源码行 1410-1489 的实际逻辑
    - 不同模型配置的meta字段差异
-   - dummy_or_profile_run模式的实际差异
    - multimodal场景下的额外字段初始化
 
-❌ initialize_kv_cache:
-   - KV cache的实际内存分配大小验证
+❌ dummy_or_profile_run模式的实际差异
+   - 源码行 1410 的参数效果
+   - 不同模式下的行为差异
+```
+
+**initialize_kv_cache** (仅签名测试):
+```python
+# 缺失场景:
+
+❌ KV cache的实际内存分配大小验证
+   - 源码行 1492-1606 的复杂逻辑
    - 不同attention backend的cache初始化差异
    - CPU block配置下的实际内存占用
    - MLA缓存与普通缓存的内存差异
-   - num_gpu_blocks的实际设置
-
-❌ CUDA graph捕获:
-   - capture_model的实际捕获流程
-   - capture_model_prefill_and_mixed的捕获
-   - 不同batch_size的graph捕获
-   - sot_warmup的实际warmup效果
-   - cudagraph_prefill/mixed/decode的实际使用
+   - num_gpu_blocks 的实际设置
 ```
 
 #### 4. 分布式场景（未覆盖）
+
+**collect_distributed_status** (仅签名测试):
 ```python
-# 当前状态: collect_distributed_status只有简单测试
 # 缺失场景:
 
 ❌ Tensor Parallel:
@@ -273,6 +338,7 @@
    - 专家负载均衡
    - EP通信的正确性
    - 混合role下的协调
+   - splitwise_role="encoder"/"decoder"/"mixed" 的不同行为
 
 ❌ Chunked MoE:
    - enable_chunked_moe = True时的分片处理
@@ -280,35 +346,8 @@
    - 不同chunk_size的性能影响
 ```
 
-#### 5. 内存和资源管理（验证不足）
-```python
-# 缺失场景:
+#### 5. Corner Case（大量缺失）
 
-❌ KV cache溢出:
-   - 接近max_num_blocks时的真实行为
-   - cache_kvs_map的实际管理策略
-   - sliding_window模式下的缓存行为
-   - kvcache_storage_backend不同后端的行为
-
-❌ CPU block swap:
-   - GPU↔CPU的实际block交换
-   - kvcache_storage_backend的不同后端行为
-   - swap性能和内存一致性
-   - num_cpu_blocks 的实际分配
-
-❌ 动态权重更新:
-   - update_parameters的实际流程
-   - shutdown_comm_group_if_worker_idle的真实行为
-   - update_weights (RDMA)的实际效果
-   - 权重切换时的请求处理
-
-❌ 参数热切换:
-   - 不同版本权重的切换
-   - 切换时的请求处理
-   - 切换失败时的回滚
-```
-
-#### 6. Corner Case（大量缺失）
 ```python
 # 缺失场景:
 
@@ -329,18 +368,26 @@
    - min_p 超出范围
    - min_dec_len > max_dec_len 的处理
    - min_tokens > max_tokens 的处理
+   - frequency_score 和 presence_score 的边界值
 
-❌ logits_processor:
+❌ logits_processor应用:
    - _init_logits_processor 的初始化
    - 不同processor类型的处理
    - processor的实际应用效果
    - guided_json/regex/grammar的处理
 
 ❌ Prompt Logprobs 复杂场景:
-   - chunked prefill时的累积
+   - chunked prefill时的累积 (源码行 3067-3089)
    - in_progress_prompt_logprobs 的正确管理
-   - 不同logprobs_mode的差异
+   - 不同logprobs_mode的差异 (raw_logprobs, logprobs)
    - prefix caching与logprobs的交互
+   - num_prompt_logprobs=-1 时的完整logprobs返回
+
+❌ prepare_rope3d 真实场景:
+   - 源码行 3037-3054 的实际逻辑验证
+   - get_rope_3d 函数的调用参数正确性
+   - rope_emb_lst 的正确生成
+   - max_len_lst 和 cumsum_seqlens 的正确处理
 ```
 
 ---
@@ -349,40 +396,44 @@
 
 ### 3.1 大量"仅签名测试"问题
 
-**问题描述**：约37%的公开方法只有简单验证，无法验证实际逻辑。
+**问题描述**：约50%的公开方法只有简单验证，无法验证实际逻辑。
 
 **问题代码示例：**
 
 ```python
-# test_gpu_model_runner_public_vision_execute.py:42-60
+# test_gpu_model_runner_public_vision_execute.py:62-84
 def test_extract_vision_features_ernie_basic(self):
     """Test extract_vision_features_ernie with basic inputs."""
+    image_tensor = self._create_meaningful_image_tensor((1, 3, 14, 14))
+    grid_thw = paddle.to_tensor([2, 2, 16], dtype=paddle.int64)
+
     vision_inputs = {
-        "image_embeds": [[paddle.zeros((10, 768))]],
-        "grid_thw": [[paddle.to_tensor([2, 2, 16])]],
+        "images_lst": [[image_tensor]],
+        "grid_thw_lst": [[2, 2, 16]],
     }
 
-    # Mock model's vision encoder
-    self.runner.model.vision_encoder = Mock()
-    self.runner.model.vision_encoder.return_value = paddle.zeros((10, 768))
+    # Mock model's vision encoder with expected shape output
+    expected_features = self._create_meaningful_image_tensor((32, 768))
+    self.runner.model.vision_model.extract_feature.return_value = expected_features
+    resampler_output = self._create_meaningful_image_tensor((32, 768))
+    self.runner.model.resampler_model.return_value = resampler_output
 
     result = self.runner.extract_vision_features_ernie(vision_inputs)
 
     # Verify result is returned
     self.assertIsNotNone(result)
-    # Verify model's vision encoder is called
-    if self.runner.model.vision_encoder.called:
-        self.assertTrue(self.runner.model.vision_encoder.called)
+    self.assertEqual(result.shape, (32, 768))
 ```
 
 **问题分析：**
-1. 断言仅为 `assertIsNotNone(result)`，不验证结果正确性
-2. Mock 的 vision_encoder 没有配置实际行为，即使调用也返回空 tensor
-3. 无法验证方法是否正确处理输入和缓存
-4. 测试看起来像是为了通过而写的，不是为了验证功能
+1. 虽然验证了shape，但没有验证预处理逻辑的正确性
+2. Mock的返回值没有验证被正确调用
+3. 没有验证grid_thw的转换（源码行 2904）
+4. 没有验证图像预处理（源码行 2907-2909）
+5. 没有验证TP场景的scatter操作（源码行 2919-2923）
 
 ```python
-# test_gpu_model_runner_public_simple.py:473-491
+# test_gpu_model_runner_public_simple.py:487-493
 def test_profile_run_basic(self):
     """Test profile_run executes profile workflow."""
     self.runner.profile_run()
@@ -420,7 +471,7 @@ self.runner.fd_config = self.mock_fd_config
 
 **问题影响：**
 - 对象缺少完整的初始化逻辑
-- 容易遗漏关键属性（如 `model`, `sampler`, `attn_backends` 等）
+- 容易遗漏关键属性（如 `model`, `sampler`, `attn_backends`, `forward_meta` 等）
 - 与实际使用场景不一致
 - `__init__` 中的初始化逻辑未被测试
 - 属性设置代码在每个测试文件重复，维护困难
@@ -431,581 +482,87 @@ self.runner.fd_config = self.mock_fd_config
 3. 初始化时间：可能非常慢
 4. 测试隔离：可能与实际环境冲突
 
----
-
-### 3.2.1 更好的替代方案
-
-#### 方案1：使用Test Configuration Factory（推荐用于unittest）
-
-```python
-# tests/worker/test_helpers/runner_factory.py
-"""GPUModelRunner测试辅助工具"""
-
-from unittest.mock import Mock, patch
-
-class TestFDConfig:
-    """专门为测试创建的配置"""
-
-    @staticmethod
-    def create_minimal():
-        """创建最小可用配置"""
-        fd_config = Mock()
-
-        # Model config
-        fd_config.model_config = Mock(
-            max_model_len=4096,
-            eos_tokens_lens=1,
-            max_stop_seqs_num=4,
-            enable_mm=False,
-            enable_logprob=False,
-            ori_vocab_size=32000,
-            dtype='float16',
-            num_hidden_layers=24,
-            hidden_size=4096,
-            vocab_size=32000,
-            head_dim=128,
-            kv_num_heads=32,
-        )
-
-        # Scheduler config
-        fd_config.scheduler_config = Mock(
-            max_num_seqs=10,
-            splitwise_role='mixed',
-        )
-
-        # Cache config
-        fd_config.cache_config = Mock(
-            block_size=16,
-            num_gpu_blocks=100,
-            num_cpu_blocks=0,
-            max_num_blocks=100,
-            enable_prefix_caching=False,
-            enable_chunked_prefill=False,
-            use_mla_cache=False,
-            kvcache_storage_backend=None,
-            kv_cache_dtype='float16',
-        )
-
-        # Parallel config
-        fd_config.parallel_config = Mock(
-            tensor_parallel_size=1,
-            pipeline_parallel_size=1,
-            use_ep=False,
-            enable_chunked_moe=False,
-        )
-
-        # Graph optimization config
-        fd_config.graph_opt_config = Mock(
-            use_cudagraph=False,
-            cudagraph_capture_sizes=[],
-            cudagraph_capture_sizes_prefill=[],
-            sot_warmup_sizes=[],
-            cudagraph_only_prefill=False,
-        )
-
-        # Speculative config
-        fd_config.speculative_config = Mock(
-            method=None,
-            num_speculative_tokens=0,
-            num_gpu_block_expand_ratio=0,
-        )
-
-        # Other configs
-        fd_config.routing_replay_config = Mock(enable_routing_replay=False)
-        fd_config.early_stop_config = Mock(enable_early_stop=False)
-
-        return fd_config
-
-
-class GPUModelRunnerTestFactory:
-    """GPUModelRunner测试工厂"""
-
-    @classmethod
-    def create_minimal(cls, **config_overrides):
-        """
-        创建最小配置的runner - 用于简单方法测试
-        保留__new__方式但封装减少重复
-        """
-        fd_config = TestFDConfig.create_minimal()
-
-        # 应用配置覆盖
-        cls._apply_config_overrides(fd_config, config_overrides)
-
-        # Patch耗时操作
-        with patch('fastdeploy.worker.gpu_model_runner.get_model_loader'):
-            mock_loader = Mock()
-            mock_model = Mock(
-                eval=lambda x: x,
-                parameters=lambda: [],
-                layers=[],
-            )
-            mock_loader.return_value = mock_model
-
-            with patch('fastdeploy.worker.gpu_model_runner.set_data_ipc'):
-                with patch('fastdeploy.worker.gpu_model_runner.share_external_data'):
-                    with patch('fastdeploy.worker.gpu_model_runner.unset_data_ipc'):
-                        runner = GPUModelRunner.__new__(GPUModelRunner)
-                        runner.fd_config = fd_config
-                        runner.model_config = fd_config.model_config
-                        runner.scheduler_config = fd_config.scheduler_config
-                        runner.cache_config = fd_config.cache_config
-                        runner.parallel_config = fd_config.parallel_config
-                        runner.speculative_config = fd_config.speculative_config
-                        runner.routing_replay_config = fd_config.routing_replay_config
-                        runner.graph_opt_config = fd_config.graph_opt_config
-
-                        # 设置必需的运行时属性
-                        runner.speculative_method = fd_config.speculative_config.method
-                        runner.speculative_decoding = False
-                        runner.enable_mm = fd_config.model_config.enable_mm
-                        runner.is_pooling_model = False
-                        runner.ori_vocab_size = fd_config.model_config.ori_vocab_size
-                        runner.enable_logprob = fd_config.model_config.enable_logprob
-                        runner.enable_early_stop = False
-                        runner.max_logprobs = None
-                        runner.temp_scaled_logprobs = True
-                        runner.top_p_normalized_logprobs = True
-                        runner.prompt_logprobs_reqs = {}
-                        runner.in_progress_prompt_logprobs = {}
-                        runner.forward_batch_reqs_list = [None] * 10
-                        runner.cache_kvs_map = {}
-                        runner.exist_prefill_flag = False
-                        runner.pooling_params = []
-
-                        # Vision相关
-                        if runner.enable_mm:
-                            runner.encoder_cache = {}
-                            runner.rope3d_cache = {}
-                        else:
-                            runner.encoder_cache = None
-                            runner.rope3d_cache = None
-
-                        # 初始化其他属性
-                        runner.sampler = cls._create_mock_sampler(fd_config)
-                        runner.guided_backend = None
-                        runner.forward_meta = None
-                        runner.share_inputs = cls._create_mock_share_inputs(fd_config)
-                        runner.use_cudagraph = fd_config.graph_opt_config.use_cudagraph
-                        runner.cudagraph_capture_sizes = fd_config.graph_opt_config.cudagraph_capture_sizes
-                        runner.enable_overlap_schedule = False
-                        runner.last_model_output_data = None
-                        runner.last_sampler_output = None
-                        runner.last_post_process_event = None
-                        runner.last_token_num = -1
-
-                        return runner
-
-    @classmethod
-    def create_with_real_init(cls, **config_overrides):
-        """
-        创建并完整初始化的runner - 用于集成测试
-        patch掉耗时的GPU操作但保留核心初始化逻辑
-        """
-        fd_config = TestFDConfig.create_minimal()
-        cls._apply_config_overrides(fd_config, config_overrides)
-
-        # Patch耗时操作
-        with patch('fastdeploy.worker.gpu_model_runner.get_model_loader') as mock_loader:
-            mock_model = Mock(
-                eval=lambda x: x,
-                parameters=lambda: [],
-                layers=[],
-            )
-            mock_loader.return_value = mock_model
-
-            with patch('fastdeploy.worker.gpu_model_runner.set_data_ipc'):
-                with patch('fastdeploy.worker.gpu_model_runner.share_external_data'):
-                    with patch('fastdeploy.worker.gpu_model_runner.unset_data_ipc'):
-                        with patch('paddle.device.cuda.empty_cache'):
-                            runner = GPUModelRunner(
-                                fd_config=fd_config,
-                                device='cpu',  # 使用CPU避免GPU依赖
-                                device_id=0,
-                                rank=0,
-                                local_rank=0,
-                            )
-                            # 初始化必要的资源
-                            runner.initialize_kv_cache(profile=False)
-                            runner.initialize_forward_meta()
-                            return runner
-
-    @staticmethod
-    def _apply_config_overrides(fd_config, overrides):
-        """应用配置覆盖"""
-        if not overrides:
-            return
-
-        for key, value in overrides.items():
-            if '.' in key:
-                # 支持嵌套配置，如 'model_config.max_model_len'
-                parts = key.split('.')
-                obj = fd_config
-                for part in parts[:-1]:
-                    obj = getattr(obj, part)
-                setattr(obj, parts[-1], value)
-            else:
-                setattr(fd_config, key, value)
-
-    @staticmethod
-    def _create_mock_sampler(fd_config):
-        """创建mock sampler"""
-        mock_sampler = Mock()
-        mock_sampler.compute_logprobs = Mock(return_value=Mock())
-        mock_sampler.sample = Mock(return_value=(Mock(), Mock(), Mock()))
-        return mock_sampler
-
-    @staticmethod
-    def _create_mock_share_inputs(fd_config):
-        """创建mock share_inputs"""
-        mock_inputs = Mock()
-        mock_inputs.get_index_by_batch_id = Mock(side_effect=lambda idx: idx)
-        mock_inputs.__getitem__ = Mock(side_effect=lambda key: Mock())
-        mock_inputs.update = Mock()
-        mock_inputs.reset_share_inputs = Mock()
-        return mock_inputs
-
-
-# 测试中使用
-import unittest
-
-class TestSimpleMethods(unittest.TestCase):
-    """简单方法测试"""
-
-    def setUp(self):
-        # 使用工厂，简洁且完整
-        self.runner = GPUModelRunnerTestFactory.create_minimal(
-            model_config__max_model_len=2048,
-        )
-
-    def test_exist_prefill(self):
-        """简单状态检查"""
-        self.runner.share_inputs = {"seq_lens_encoder": Mock(return_value=Mock())}
-        self.assertTrue(self.runner.exist_prefill())
-
-
-class TestExecuteModel(unittest.TestCase):
-    """核心执行测试"""
-
-    def setUp(self):
-        # 使用真实初始化，但patch耗时操作
-        self.runner = GPUModelRunnerTestFactory.create_with_real_init(
-            model_config__max_model_len=2048,
-        )
-
-    def test_execute_model_normal(self):
-        """测试实际执行流程"""
-        # runner已完整初始化，包括kv_cache和forward_meta
-        # 只需要patch具体的模型前向传播
-        with patch.object(self.runner.model, 'forward') as mock_forward:
-            mock_forward.return_value = paddle.zeros((10, 32000))
-            # 可以测试真实执行路径
-            pass
-```
-
-#### 方案2：使用Pytest Fixture（如果项目使用pytest）
-
-```python
-# tests/worker/conftest.py
-import pytest
-from unittest.mock import Mock, patch
-
-@pytest.fixture
-def minimal_fd_config():
-    """最小测试配置fixture"""
-    config = Mock()
-    config.model_config = Mock(
-        max_model_len=4096,
-        enable_mm=False,
-    )
-    config.scheduler_config = Mock(
-        max_num_seqs=10,
-        splitwise_role='mixed',
-    )
-    config.cache_config = Mock(
-        block_size=16,
-        num_gpu_blocks=100,
-    )
-    config.parallel_config = Mock(
-        tensor_parallel_size=1,
-        use_ep=False,
-    )
-    config.graph_opt_config = Mock(
-        use_cudagraph=False,
-    )
-    config.speculative_config = Mock(
-        method=None,
-    )
-    config.routing_replay_config = Mock(
-        enable_routing_replay=False,
-    )
-    return config
-
-@pytest.fixture
-def test_runner(minimal_fd_config):
-    """测试用runner fixture"""
-    with patch('fastdeploy.worker.gpu_model_runner.get_model_loader') as mock_loader:
-        mock_model = Mock(
-            eval=lambda x: x,
-            parameters=lambda: [],
-            layers=[],
-        )
-        mock_loader.return_value = mock_model
-        minimal_fd_config.model_loader = mock_loader
-
-        with patch('fastdeploy.worker.gpu_model_runner.set_data_ipc'):
-            with patch('fastdeploy.worker.gpu_model_runner.share_external_data'):
-                with patch('fastdeploy.worker.gpu_model_runner.unset_data_ipc'):
-                    return GPUModelRunner(
-                        fd_config=minimal_fd_config,
-                        device='cpu',
-                        device_id=0,
-                        rank=0,
-                        local_rank=0,
-                    )
-
-@pytest.fixture
-def runner_with_mm(test_runner):
-    """带多模态的runner"""
-    test_runner.enable_mm = True
-    test_runner.model_config.enable_mm = True
-    test_runner.encoder_cache = {}
-    return test_runner
-
-# 测试中使用
-class TestExecuteModel:
-    """pytest测试类 - 无需setUp"""
-
-    def test_normal_execution(self, test_runner):
-        """自动注入test_runner，无需setUp"""
-        with patch.object(test_runner.model, 'forward'):
-            test_runner.execute_model_normal([], 0)
-
-    def test_with_mm(self, runner_with_mm):
-        """自动注入runner_with_mm"""
-        result = runner_with_mm.execute_model_normal([], 0)
-
-
-def test_simple_method(test_runner):
-    """函数式测试也支持"""
-    test_runner.share_inputs = {"seq_lens_encoder": Mock()}
-    assert test_runner.exist_prefill()
-```
-
-#### 方案3：Builder Pattern（适用于复杂配置场景）
-
-```python
-# tests/worker/test_helpers/runner_builder.py
-
-class GPUModelRunnerTestBuilder:
-    """GPUModelRunner测试构建器 - 链式API"""
-
-    def __init__(self):
-        self._fd_config = TestFDConfig.create_minimal()
-        self._patches = []
-
-    def with_device(self, device='cpu'):
-        """设置设备"""
-        self._device = device
-        return self
-
-    def with_max_num_seqs(self, num):
-        """设置最大序列数"""
-        self._fd_config.scheduler_config.max_num_seqs = num
-        return self
-
-    def with_enable_mm(self, enable=True):
-        """启用多模态"""
-        self._fd_config.model_config.enable_mm = enable
-        return self
-
-    def with_enable_speculative(self, method='mtp', num_tokens=4):
-        """启用推测解码"""
-        self._fd_config.speculative_config.method = method
-        self._fd_config.speculative_config.num_speculative_tokens = num_tokens
-        return self
-
-    def with_enable_cudagraph(self, enable=True):
-        """启用CUDA Graph"""
-        self._fd_config.graph_opt_config.use_cudagraph = enable
-        return self
-
-    def with_kv_cache(self, num_blocks=100, block_size=16):
-        """配置KV Cache"""
-        self._fd_config.cache_config.num_gpu_blocks = num_blocks
-        self._fd_config.cache_config.block_size = block_size
-        return self
-
-    def patch_load_model(self):
-        """patch模型加载"""
-        self._patches.append(
-            patch('fastdeploy.worker.gpu_model_runner.get_model_loader')
-        )
-        return self
-
-    def build(self):
-        """构建runner实例"""
-        # 应用所有patch
-        context_managers = [p.start() for p in self._patches]
-        for ctx in context_managers:
-            ctx.__enter__()
-
-        # 使用__new__但工厂封装
-        with patch('fastdeploy.worker.gpu_model_runner.set_data_ipc'):
-            with patch('fastdeploy.worker.gpu_model_runner.share_external_data'):
-                runner = GPUModelRunner.__new__(GPUModelRunner)
-                runner.fd_config = self._fd_config
-                # ... 设置所有属性
-
-                return runner
-
-
-# 测试中使用
-class TestComplexConfig(unittest.TestCase):
-    def setUp(self):
-        # 链式调用，清晰且灵活
-        self.runner = (GPUModelRunnerTestBuilder()
-                     .with_device('cpu')
-                     .with_max_num_seqs(20)
-                     .with_enable_mm(False)
-                     .with_enable_speculative('mtp')
-                     .with_kv_cache(num_blocks=200)
-                     .patch_load_model()
-                     .build())
-```
-
----
-
-### 3.2.2 方案对比与推荐
-
-| 方案 | 优点 | 缺点 | 适用场景 |
-|------|------|------|----------|
-| **当前`__new__`** | 快速、简单 | 对象不完整、易遗漏 | 简单方法测试 |
-| **Test Config Factory** | 可复用、配置集中 | 需要维护配置结构 | unittest项目（推荐） |
-| **Pytest Fixture** | 自动注入、最优雅 | 需要迁移到pytest | pytest项目 |
-| **Builder Pattern** | 链式调用、清晰 | 代码量稍多 | 复杂配置场景 |
-| **混合方案** | 灵活、针对性强 | 需要多种工具 | 大型项目 |
-
----
-
-### 3.2.3 针对不同测试类型的推荐
-
-**对于FastDeploy项目，推荐使用混合方案：**
-
-1. **简单方法测试**（如`exist_prefill`、`not_need_stop`）：
-   - 使用 `TestConfigFactory.create_minimal()`
-   - 保留`__new__`方式但封装减少重复代码
-   - 无需完整初始化
-
-2. **核心逻辑测试**（如`execute_model_normal`）：
-   - 使用 `TestConfigFactory.create_with_real_init()`
-   - 真实初始化但patch耗时操作
-   - 测试实际执行路径
-
-3. **集成测试**：
-   - 使用真实初始化的runner
-   - patch外部依赖（如CUDA API）
-   - 测试完整流程
-
-4. **如果项目可以迁移到pytest：**
-   - 优先使用pytest fixture
-   - 可以实现更优雅的自动注入
-
-```python
-# 改进后的测试代码示例
-class TestExecuteModelNormal(unittest.TestCase):
-    """核心执行测试 - 使用真实初始化"""
-
-    def setUp(self):
-        # 使用工厂，简洁清晰
-        self.runner = GPUModelRunnerTestFactory.create_with_real_init(
-            max_num_seqs=10,
-            enable_mm=False,
-        )
-
-    def test_with_real_forward(self):
-        # runner已完整初始化，可以测试真实逻辑
-        with patch.object(self.runner.model, 'forward') as mock_forward:
-            # 配置正确的返回值
-            mock_forward.return_value = (
-                paddle.zeros((10, 768)),  # hidden_states
-                [0],  # num_running_requests
-                Mock(),  # token_num_event
-            )
-
-            result = self.runner.execute_model_normal([mock_req], 1)
-
-            # 验证真实行为，而非mock核心方法
-            mock_forward.assert_called_once()
-```
-
-这样既避免了`__new__`的问题，又保持了测试的可控性和可维护性。
-
 ### 3.3 Mock 设置不完整
 
 **问题描述**：复杂方法的 Mock 没有模拟真实的返回值和副作用。
 
 ```python
-# test_gpu_model_runner_public_vision_execute.py:78-89
+# test_gpu_model_runner_public_vision_execute.py:130-161
 def test_extract_vision_features_ernie_with_cache(self):
     """Test extract_vision_features_ernie with encoder cache."""
-    vision_inputs = {
-        "image_embeds": [[paddle.zeros((10, 768))]],
-        "grid_thw": [[paddle.to_tensor([2, 2, 16])]],
-        "image_hash": "test_hash_123",
-    }
+    # 即使缓存被预填充，该方法仍应提取特征
+    # 缓存查找由调用者处理
+    self.runner.encoder_cache["test_hash_123"] = self._create_meaningful_image_tensor((32, 768))
 
-    # Pre-populate cache
-    cached_features = paddle.zeros((10, 768))
-    self.runner.encoder_cache["test_hash_123"] = cached_features
+    # Mock setup
+    expected_features = self._create_meaningful_image_tensor((32, 768))
+    self.runner.model.vision_model.extract_feature.return_value = expected_features
+    resampler_output = self._create_meaningful_image_tensor((32, 768))
+    self.runner.model.resampler_model.return_value = resampler_output
 
     result = self.runner.extract_vision_features_ernie(vision_inputs)
 
-    # Verify result is returned
+    # 验证方法仍然处理输入
     self.assertIsNotNone(result)
+    self.assertEqual(result.shape, (32, 768))
 ```
 
 **问题分析：**
-1. 只验证结果非 None，不验证是否使用了缓存
-2. 不验证 vision_encoder 是否被跳过（应该被跳过）
-3. 不验证返回的特征是否与缓存一致
-4. Mock 数据都是零 tensor，没有真实数据的特征
+1. 没有验证缓存是否被使用（源码中没有使用encoder_cache）
+2. Mock的vision_encoder总是被调用，无法验证跳过逻辑
+3. 没有验证grid_thw转换的正确性
+4. 没有验证图像预处理的正确性
 
 ```python
-# test_gpu_model_runner_public_vision_execute.py:569-606
-def test_execute_model_overlap_full_flow(self):
-    """Test execute_model_overlap complete flow."""
-    # ... 大量mock设置 ...
-
+# test_gpu_model_runner_public_vision_execute.py:697-749
+def test_execute_model_normal_full_flow(self):
+    """Test execute_model_normal complete flow."""
+    # Mock sub-methods but verify they're called correctly
     with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
-        mock_preprocess_execute.return_value = (
-            mock_model_output,
-            [0],
-            mock_token_num_event
-        )
-        # ...
+        mock_preprocess_execute.return_value = (mock_model_output, [0], mock_token_num_event)
+
+        with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            mock_postprocess.return_value = (
+                mock_model_output_data,
+                mock_sampler_output,
+                mock_post_process_event,
+                0,
+            )
+
+            with patch.object(self.runner, '_save_model_output') as mock_save:
+                mock_forward_batch = [Mock()]
+                self.runner.execute_model_normal(
+                    model_forward_batch=mock_forward_batch, num_running_requests=1
+                )
+
+                # 验证完整流程，包含参数检查
+                mock_preprocess_execute.assert_called_once_with(
+                    mock_forward_batch, 1
+                )
 ```
 
 **问题分析：**
-1. patch 了核心执行方法 `_preprocess_and_execute_model`
+1. patch了核心执行方法`_preprocess_and_execute_model`
 2. 使整个测试变成"空壳"，只测试调用顺序
 3. 无法验证实际的模型推理逻辑
-4. 即使方法实现完全错误，测试也会通过
+4. 无法验证enable_mm=True时的分支（源码行 2289-2294）
+5. 即使方法实现完全错误，测试也会通过
 
 ### 3.4 断言验证过于宽泛
 
 **问题描述：** assert 只验证部分属性，不验证实际行为正确性。
 
 ```python
-# test_gpu_model_runner_p1_priority.py:488-501
+# test_gpu_model_runner_p1_priority.py:461-472
 def test_vision_cache_hit(self):
     """Test vision encoder cache hit scenario."""
     mm_hash = "hash_12345"
     cached_features = paddle.zeros((10, 768))
 
-    # Pre-populate cache
+    # 预填充缓存
     self.runner.encoder_cache[mm_hash] = cached_features
 
-    # Verify cache hit
+    # 验证缓存命中
     self.assertIn(mm_hash, self.runner.encoder_cache)
     self.assertEqual(
         self.runner.encoder_cache[mm_hash].shape, cached_features.shape
@@ -1013,37 +570,17 @@ def test_vision_cache_hit(self):
 ```
 
 **问题分析：**
-1. 只验证了 shape，没有验证值或特征正确性
-2. 所有 cached_features 都是零 tensor，无法发现特征提取错误
-3. 没有验证是否跳过了 vision_encoder 调用
+1. 只验证了shape，没有验证值或特征正确性
+2. 所有cached_features都是零tensor，无法发现特征提取错误
+3. 没有验证是否跳过了vision_encoder调用
 4. 没有验证返回的特征是否与缓存一致
-
-```python
-# test_gpu_model_runner_public.py:50-56
-def test_basic_input_length_list(self):
-    """Test basic case with normal input."""
-    input_length_list, max_dec_len_list, block_num = self.runner.get_input_length_list(
-        num_tokens=160, batch_size=2, expected_decode_len=100, capture_prefill=False
-    )
-
-    # input_length = min(160//2, 4096-101) = min(80, 3995) = 80
-    self.assertEqual(input_length_list, [80, 80])
-    self.assertEqual(max_dec_len_list, [101, 101])
-    # block_num = (80 + 16 - 1) // 16 + 0 = 95 // 16 = 5
-    self.assertEqual(block_num, 5)
-```
-
-**问题分析：**
-1. 这是比较好的测试案例，验证了具体的计算结果
-2. 但注释中直接写死了预期值，如果计算逻辑变化，测试会失效
-3. 应该基于配置动态计算预期值
 
 ### 3.5 缺少端到端测试
 
 **问题描述：**虽然有 e2e 测试文件，但都是 mock，没有真实执行。
 
 ```python
-# test_gpu_model_runner_e2e.py:171-185
+# test_gpu_model_runner_e2e.py:172-192
 def test_complete_prefill_decode_flow(self):
     """Test complete prefill -> decode -> stop flow."""
     # ... 设置各种mock ...
@@ -1060,7 +597,7 @@ def test_complete_prefill_decode_flow(self):
                     num_running_requests=1
                 )
 
-                # Verify flow is executed
+                # 验证流程被执行
                 mock_preprocess_execute.assert_called_once()
                 mock_postprocess.assert_called_once()
 ```
@@ -1098,26 +635,84 @@ def test_complete_prefill_decode_flow(self):
 | 场景 | 重要性 | 描述 | 当前进度 |
 |------|---------|------|----------|
 | 真实模型前向传播 | 高 | 使用真实模型（非mock）的推理 | ❌ 全mock |
-| 多模态端到端流程 | 高 | 图像特征提取 + 文本生成 | ❌ 仅签名 |
-| 专家并行集成 | 高 | EP模式下的跨worker协调 | ❌ 未覆盖 |
+| 多模态端到端流程 | 高 | 图像特征提取 + 文本生成，预处理逻辑 | ⚠️ 仅签名 |
+| 专家并行集成 | 高 | EP模式下的跨worker协调，splitwise_role | ❌ 未覆盖 |
 | 动态权重更新 | 高 | update_parameters和update_weights实际效果 | ❌ 仅签名 |
 | CUDAGraph捕获和回放 | 中 | 实际图的捕获和使用 | ❌ 仅签名 |
-| Prefix cache命中/未命中 | 中 | 缓存效果验证 | ⚠️ 部分mock |
+| Prefix cache命中/未命中 | 中 | 缓存效果验证 | ⚠️ 简单mock |
 | MoE分片路由 | 中 | chunked MoE的实际行为 | ❌ 未覆盖 |
 | 内存压力下的正确性 | 高 | KV cache满时的行为 | ⚠️ 简单mock |
 | 并发请求的正确性 | 高 | 多请求并发时的状态一致性 | ❌ 未覆盖 |
 | 坏token和stop_seqs处理 | 中 | bad_tokens过滤和序列停止 | ❌ 未覆盖 |
 | logits_processor应用 | 中 | logits后处理器的实际效果 | ❌ 未覆盖 |
-| Tensor Parallel实际行为 | 高 | TP>1时的通信正确性 | ❌ 未覆盖 |
+| Tensor Parallel实际行为 | 高 | TP>1时的通信正确性，scatter操作 | ❌ 未覆盖 |
 | Pipeline Parallel实际行为 | 中 | PP>1时的流水线正确性 | ❌ 未覆盖 |
-| Overlap Schedule实际行为 | 中 | 重叠调度的实际性能 | ❌ 未覆盖 |
-| Speculative Decoding实际效果 | 高 | Ngram/MTP的真实性能 | ❌ 未覆盖 |
+| Overlap Schedule实际行为 | 中 | 重叠调度的实际性能 | ⚠️ 仅mock |
+| Speculative Decoding实际效果 | 高 | Ngram/MTP的真实性能 | ⚠️ 仅mock |
 
 ---
 
-## 五、改进建议
+## 五、Mock质量分析
 
-### 5.1 测试架构优化
+### 5.1 是否遵循"最少Mock"原则
+
+**当前状态：大量违反最少Mock原则**
+
+| 测试方法 | Mock范围 | 问题 |
+|----------|---------|------|
+| `test_execute_model_normal_full_flow` | patch `_preprocess_and_execute_model`, `_postprocess`, `_save_model_output` | 核心方法全被patch，变成空壳 |
+| `test_extract_vision_features_ernie_*` | mock `model.vision_model.extract_feature`, `model.resampler_model` | 只验证方法能调用，不验证逻辑 |
+| `test_profile_run_*` | mock `clear_cache`, `execute_model`, `clear_parameters`, `clear_requests` | 只验证调用顺序，不验证行为 |
+| `test_initialize_kv_cache_*` | mock `get_attention_backend` | 验证不充分，只验证返回值非None |
+
+**问题根源：**
+1. 测试为了"通过"而patch核心方法
+2. 无法验证实际执行逻辑
+3. 即使方法内部有错误，测试也会通过
+4. Mock 数据过于简单（全零tensor）
+5. Mock 的副作用未被正确配置
+
+### 5.2 Mock数据/行为是否到位
+
+**当前状态：Mock数据过于简单**
+
+```python
+# 问题示例1: 全零数据
+cached_features = paddle.zeros((10, 768))
+
+# 问题示例2: Mock返回值没有验证
+self.runner.model.vision_model.extract_feature.return_value = expected_features
+
+# 问题示例3: 没有验证副作用
+self.runner.sampler.sample.return_value = (Mock(), Mock(), Mock())
+```
+
+**改进建议：**
+```python
+# ✅ 推荐: 使用有意义的测试数据
+cached_features = paddle.to_tensor([
+    [0.1, 0.2, 0.3, ...],  # 实际特征值
+], dtype=paddle.float32)
+
+# ✅ 推荐: 验证Mock的调用参数
+mock_vision_encoder.assert_called_once_with(
+    expected_images,  # 验证传入的图像
+    expected_grid_thw,  # 验证传入的grid_thw
+)
+
+# ✅ 推荐: 配置合理的返回值和副作用
+mock_sampler.sample.return_value = (
+    next_tokens,  # 真实的token序列
+    logprobs,  # 真实的logprobs
+    stop_flags,  # 真实的停止标志
+)
+```
+
+---
+
+## 六、改进建议
+
+### 6.1 测试架构优化
 
 1. **合并测试文件**：按功能模块而非"类型"来组织
    - `test_gpu_model_runner_basic.py` - 基础状态检查方法
@@ -1129,12 +724,12 @@ def test_complete_prefill_decode_flow(self):
 
 2. **移除无效的浅层Mock**：
    ```python
-   # 不推荐 - patch核心执行方法
+   # ❌ 不推荐 - patch核心执行方法
    with patch.object(self.runner, '_preprocess_and_execute_model'):
        self.runner.execute_model_normal(...)
 
-   # 推荐 - patch外部依赖，测试核心逻辑
-   with patch('fastdeploy.worker.gpu_model_runner.paddle.device.cuda.empty_cache'):
+   # ✅ 推荐 - patch外部依赖，测试核心逻辑
+   with patch('paddle.device.cuda.empty_cache'):
        self.runner.execute_model_normal(...)
        # 验证实际行为，而非只验证调用
    ```
@@ -1157,18 +752,7 @@ def test_complete_prefill_decode_flow(self):
        return runner
    ```
 
-4. **改进Mock数据的真实性**：
-   ```python
-   # 不推荐 - 全零数据
-   cached_features = paddle.zeros((10, 768))
-
-   # 推荐 - 使用有意义的测试数据
-   cached_features = paddle.to_tensor([
-       [0.1, 0.2, 0.3, ...],  # 实际特征值
-   ])
-   ```
-
-### 5.2 高优先级测试用例
+### 6.2 高优先级测试用例
 
 #### P0 - 核心执行流程
 ```python
@@ -1199,64 +783,29 @@ class TestCoreExecution(unittest.TestCase):
 class TestVisionFeaturesReal(unittest.TestCase):
     """真实的视觉特征提取测试"""
 
-    def test_ernie_cache_hit_skip_encoder(self):
-        """测试缓存命中时跳过encoder"""
-        # 设置缓存
-        # 验证vision_encoder未被调用
-        # 验证返回的是缓存特征
+    def test_ernie_preprocessing_logic(self):
+        """测试Ernie图像预处理逻辑"""
+        # 验证rescale_factor的乘法
+        # 验证mean和std的归一化
+        # 验证dtype转换 (float32 -> bfloat16)
+
+    def test_ernie_tp_scatter(self):
+        """测试Ernie TP场景的scatter操作"""
+        self.runner.parallel_config.tensor_parallel_size = 2
+        # 验证reshape操作
+        # 验证ScatterOp.apply调用
+        # 验证最终shape正确性
 
     def test_qwen_multi_image_order(self):
         """测试Qwen多图像顺序"""
         # 多图输入
         # 验证特征处理顺序正确
         # 验证grid_thw匹配
-
-    def test_rope3d_cache_key(self):
-        """测试Rope3D缓存key生成"""
-        # 不同max_tokens_lst生成不同key
-        # 相同配置生成相同key
 ```
 
-### 5.3 集成测试建议
-
-```python
-class TestGPUModelRunnerIntegration(unittest.TestCase):
-    """GPUModelRunner集成测试"""
-
-    @classmethod
-    def setUpClass(cls):
-        """使用真实配置初始化（但使用小型测试模型）"""
-        cls.runner = GPUModelRunner(
-            fd_config=cls._create_test_config(),
-            device="gpu",
-            device_id=0,
-            rank=0,
-            local_rank=0,
-        )
-        cls.runner.load_model()
-        cls.runner.initialize_kv_cache()
-        cls.runner.initialize_forward_meta()
-
-    def test_complete_generation_flow(self):
-        """完整的生成流程测试"""
-        # 1. 插入prefill请求
-        # 2. 执行prefill
-        # 3. 验证KV cache被更新
-        # 4. 执行多次decode
-        # 5. 验证输出token序列正确
-        # 6. 清理资源
-
-    def test_concurrent_mixed_requests(self):
-        """并发的prefill和decode请求"""
-        # 同时插入prefill和decode请求
-        # 验证batch处理正确
-        # 验证无数据竞争
-```
-
-### 5.4 Mock使用原则
+### 6.3 Mock使用原则
 
 遵循"最少Mock"原则：
-
 ```python
 # ❌ 不推荐 - 过度Mock
 with patch.object(self.runner, '_preprocess_and_execute_model'):
@@ -1282,47 +831,47 @@ Mock不应该：
 
 ---
 
-## 六、总结
+## 七、总结
 
-### 6.1 当前测试状态
+### 7.1 当前测试状态
 
 | 维度 | 状态 | 说明 |
 |------|------|------|
-| 方法覆盖 | ⚠️ 100%签名, 41%逻辑 | 所有方法有签名测试，41%有逻辑验证 |
-| 场景覆盖 | ⚠️ 约35% | 基本场景有覆盖，复杂场景严重缺失 |
-| Corner case | ⚠️ 约40% | 边界值有部分测试，错误场景较全 |
+| 方法覆盖 | ⚠️ 100%签名, 33%逻辑 | 所有方法有签名测试，33%有逻辑验证 |
+| 场景覆盖 | ⚠️ 约30% | 基础场景有覆盖，复杂场景严重缺失 |
+| Corner case | ⚠️ 约35% | 边界值有部分测试，错误场景较全 |
 | 集成测试 | ❌ 不足 | e2e测试存在但全为mock |
 | 性能测试 | ❌ 缺失 | 无基准测试 |
 | 并发测试 | ❌ 缺失 | 无多线程/多进程测试 |
 
-### 6.2 主要问题总结
+### 7.2 主要问题总结
 
-1. **约37%的公开方法仅有签名测试** - 无法验证实际逻辑
-2. **核心执行方法过度Mock** - `_preprocess_and_execute_model` 被patch，使测试变成"空壳"
-3. **视觉特征提取验证不足** - 只检查结果非None，不验证正确性
+1. **约50%的公开方法仅有签名测试** - 无法验证实际逻辑
+2. **核心执行方法过度Mock** - `_preprocess_and_execute_model`被patch，使测试变成"空壳"
+3. **视觉特征提取验证不足** - 只检查结果非None或shape，不验证预处理、TP、AMP等复杂逻辑
 4. **无真实模型执行的测试** - 所有执行都是mock，无法发现实际推理问题
 5. **缺少关键集成场景的测试** - 多模态、EP、动态权重等
 6. **Mock 数据过于简单** - 全零tensor，无法发现特征提取错误
 7. **测试文件过度分割** - 7个文件，大量重复代码
 
-### 6.3 优先改进项
+### 7.3 优先改进项
 
 | 优先级 | 改进项 | 预期收益 | 工作量 |
 |--------|---------|----------|--------|
 | P0 | 移除核心方法的patch mock | 提高测试有效性 | 中 |
-| P0 | 补充视觉特征提取验证 | 确保多模态正确性 | 中 |
-| P0 | 改进Mock数据的真实性 | 发现更多边界问题 | 低 |
+| P0 | 补充视觉特征提取验证 | 确保多模态正确性 | 高 |
+| P0 | 改进Mock数据的真实性 | 发现更多边界问题 | 中 |
 | P0 | 添加真实执行的集成测试 | 发现组件间问题 | 高 |
 | P1 | 合并测试文件 | 改善可维护性 | 低 |
 | P1 | 补充分布式场景测试 | 确保TP/PP/EP正确性 | 高 |
 | P2 | 建立性能基准 | 防止性能退化 | 中 |
 | P2 | 添加并发测试 | 发现线程安全问题 | 中 |
 
-### 6.4 测试覆盖优先级建议
+### 7.4 测试覆盖优先级建议
 
 #### P0 - 高优先级（核心功能）
 1. **execute_model_normal/overlap** - 核心执行入口，需移除patch mock
-2. **extract_vision_features_*系列** - 多模态核心功能，需验证正确性
+2. **extract_vision_features_*系列** - 多模态核心功能，需验证预处理、TP、AMP等逻辑
 3. **端到端集成测试** - 完整流程验证
 4. **改进Mock数据质量** - 使用有意义的测试数据
 
@@ -1340,16 +889,16 @@ Mock不应该：
 
 ---
 
-## 七、附录：测试代码质量评分
+## 八、附录：测试代码质量评分
 
 | 评分项 | 得分 | 满分 | 说明 |
 |--------|------|------|------|
 | 方法覆盖度 | 90 | 100 | 所有公开方法有测试 |
-| 逻辑验证度 | 41 | 100 | 仅41%的方法有真实逻辑验证 |
-| 场景覆盖度 | 35 | 100 | 基础场景覆盖，复杂场景缺失 |
-| Mock合理性 | 40 | 100 | 过度使用patch mock核心方法 |
-| 断言完整性 | 50 | 100 | 大量断言仅检查非None |
-| **综合得分** | **51** | **100** | **及格水平，需大幅改进** |
+| 逻辑验证度 | 33 | 100 | 仅33%的方法有真实逻辑验证（过度Mock） |
+| 场景覆盖度 | 30 | 100 | 基础场景覆盖，复杂场景缺失 |
+| Mock合理性 | 35 | 100 | 大量使用patch mock核心方法，数据过于简单 |
+| 断言完整性 | 50 | 100 | 大量断言仅检查非None或shape |
+| **综合得分** | **48** | **100** | **不及格水平，需大幅改进** |
 
 ---
 
