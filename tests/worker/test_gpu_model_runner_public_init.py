@@ -14,6 +14,7 @@
 
 """Unit tests for initialization related public methods of GPUModelRunner."""
 
+import paddle
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
@@ -65,6 +66,10 @@ class TestInitializeForwardMeta(unittest.TestCase):
         self.mock_routing_replay_config.enable_routing_replay = False
         self.mock_fd_config.routing_replay_config = self.mock_routing_replay_config
 
+        self.mock_scheduler_config = Mock()
+        self.mock_scheduler_config.splitwise_role = "mixed"
+        self.mock_fd_config.scheduler_config = self.mock_scheduler_config
+
         self.runner = GPUModelRunner.__new__(GPUModelRunner)
         self.runner.fd_config = self.mock_fd_config
         self.runner.model_config = self.mock_model_config
@@ -74,9 +79,46 @@ class TestInitializeForwardMeta(unittest.TestCase):
         self.runner.routing_replay_config = self.mock_routing_replay_config
         self.runner.routing_replay_manager = None
         self.runner.quant_config = None
-        self.runner.share_inputs = Mock()
+        self.runner.use_cudagraph = False
+        self.runner.cudagraph_only_prefill = False
+        self.runner.share_inputs = {
+            "ids_remove_padding": paddle.zeros((10, 100), dtype="int64"),
+            "rope_emb": paddle.zeros((10, 64), dtype="float32"),
+            "decoder_batch_ids": paddle.zeros((10,), dtype="int32"),
+            "decoder_tile_ids_per_batch": paddle.zeros((10,), dtype="int32"),
+            "decoder_num_blocks_cpu": paddle.zeros((10,), dtype="int32"),
+            "decoder_num_blocks_device": paddle.zeros((10,), dtype="int32"),
+            "decoder_chunk_size_device": paddle.zeros((10,), dtype="int32"),
+            "max_len_tensor_cpu": paddle.zeros((10,), dtype="int32"),
+            "seq_lens_encoder": paddle.zeros((10,), dtype="int32"),
+            "seq_lens_decoder": paddle.zeros((10,), dtype="int32"),
+            "seq_lens_this_time": paddle.zeros((10,), dtype="int32"),
+            "batch_id_per_token": paddle.zeros((100,), dtype="int32"),
+            "cu_seqlens_q": paddle.zeros((10,), dtype="int32"),
+            "cu_seqlens_k": paddle.zeros((10,), dtype="int32"),
+            "block_tables": paddle.zeros((10, 100), dtype="int32"),
+            "caches": [None] * 24,
+            "encoder_batch_ids": paddle.zeros((10,), dtype="int32"),
+            "encoder_tile_ids_per_batch": paddle.zeros((10,), dtype="int32"),
+            "encoder_num_blocks_x_cpu": paddle.zeros((10,), dtype="int32"),
+            "kv_batch_ids": paddle.zeros((10,), dtype="int32"),
+            "kv_tile_ids_per_batch": paddle.zeros((10,), dtype="int32"),
+            "kv_num_blocks_x_cpu": paddle.zeros((10,), dtype="int32"),
+        }
         self.runner.forward_meta = MagicMock()
         self.runner.lora_request_ids_to_shard_id = None
+        self.runner.attn_backends = [Mock()]
+        self.runner.attn_backends[0].init_attention_metadata = Mock()
+        # Add missing methods required by initialize_forward_meta
+        self.runner.exist_prefill = Mock(return_value=False)
+        self.runner.only_prefill = Mock(return_value=False)
+        self.runner.not_need_stop = Mock(return_value=True)
+        self.runner.collect_distributed_status = Mock(return_value=Mock(if_only_decode=False))
+        # Add missing attributes
+        self.runner.speculative_decoding = False
+        self.runner.proposer = Mock()
+        self.runner.graph_opt_config = Mock()
+        self.runner.graph_opt_config.graph_opt_level = 0
 
     def test_initialize_forward_meta_basic(self):
         """Test initialize_forward_meta with default parameters."""
@@ -110,16 +152,23 @@ class TestInitializeForwardMeta(unittest.TestCase):
         self.assertIsNotNone(forward_meta)
 
     def test_initialize_forward_meta_dummy_run(self):
-        """Test initialize_forward_meta with dummy_or_profile_run=True."""
-        # Save original forward_meta to compare
-        original_meta = self.runner.forward_meta
+        """Test initialize_forward_meta with dummy_or_profile_run=True.
 
+        Verify is_dummy_or_profile_run field is set correctly.
+        """
+        # Run with is_dummy_or_profile_run=True
         self.runner.initialize_forward_meta(is_dummy_or_profile_run=True)
 
-        # Verify forward_meta is initialized even for dummy run
+        # Verify forward_meta is initialized
         self.assertIsNotNone(self.runner.forward_meta)
-        # In dummy run, the forward_meta should still be created
-        # The parameter affects behavior but still creates the object
+
+        # Verify is_dummy_or_profile_run is set to True
+        self.assertEqual(self.runner.forward_meta.is_dummy_or_profile_run, True)
+
+        # Verify attn_backend.init_attention_metadata was called
+        self.runner.attn_backends[0].init_attention_metadata.assert_called_once_with(
+            self.runner.forward_meta
+        )
 
     def test_initialize_forward_meta_with_multimodal(self):
         """Test initialize_forward_meta with enable_mm=True."""
@@ -182,6 +231,7 @@ class TestInitializeKVCache(unittest.TestCase):
         self.mock_cache_config.block_size = 16
         self.mock_cache_config.max_num_blocks = 1000
         self.mock_cache_config.cache_cpu_block_num = 0
+        self.mock_cache_config.num_cpu_blocks = 0
         self.mock_cache_config.kv_cache_dtype = "float16"
         self.mock_cache_config.enable_prefix_caching = False
         self.mock_cache_config.enable_chunked_prefill = False
@@ -200,6 +250,9 @@ class TestInitializeKVCache(unittest.TestCase):
         self.mock_routing_replay_config = Mock()
         self.mock_routing_replay_config.enable_routing_replay = False
         self.mock_fd_config.routing_replay_config = self.mock_routing_replay_config
+        self.mock_scheduler_config = Mock()
+        self.mock_scheduler_config.splitwise_role = "mixed"
+        self.mock_fd_config.scheduler_config = self.mock_scheduler_config
 
         self.runner = GPUModelRunner.__new__(GPUModelRunner)
         self.runner.fd_config = self.mock_fd_config
@@ -217,6 +270,19 @@ class TestInitializeKVCache(unittest.TestCase):
         self.runner.cache_v_cpu = None
         self.runner.kv_cache_quant_type = None
         self.runner.lora_request_ids_to_shard_id = None
+        self.runner.quant_config = None
+        self.runner.local_rank = 0
+        self.runner.device_id = 0
+        self.runner.cache_kvs_map = {}
+        self.runner.cache_ready_signal = Mock()
+        self.runner.cache_ready_signal.value = [1]
+        self.runner.attn_backends = [Mock()]
+        self.runner.attn_backends[0].get_backend_name = Mock(return_value="test_backend")
+        self.runner.attn_backends[0].get_kv_cache_shape = Mock(return_value=((100, 4, 64, 128), (100, 4, 64, 128)))
+        self.runner.share_inputs = {"caches": []}
+        # Add missing attributes
+        self.runner.device = Mock()
+        self.runner.device_id = 0
 
     @patch("fastdeploy.worker.gpu_model_runner.get_attention_backend")
     def test_initialize_kv_cache_basic(self, mock_get_backend):
