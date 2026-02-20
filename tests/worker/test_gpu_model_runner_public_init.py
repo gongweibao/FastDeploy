@@ -15,10 +15,8 @@
 """Unit tests for initialization related public methods of GPUModelRunner."""
 
 import unittest
-from unittest.mock import Mock, patch, MagicMock, call
+from unittest.mock import MagicMock, Mock, patch
 
-import numpy as np
-import paddle
 
 from fastdeploy.worker.gpu_model_runner import GPUModelRunner
 

@@ -15,10 +15,9 @@
 """Unit tests for vision and execute related public methods of GPUModelRunner."""
 
 import unittest
-from unittest.mock import Mock, patch, MagicMock, call
+from unittest.mock import Mock, patch
 
 import paddle
-import numpy as np
 
 from fastdeploy.worker.gpu_model_runner import GPUModelRunner
 
@@ -554,13 +553,13 @@ class TestExecuteModel(unittest.TestCase):
         self.runner.execute_model_normal = Mock()
         self.runner.execute_model_normal.return_value = None
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (Mock(), [0], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (mock_model_output_data, Mock(), Mock(), 0)
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
+                with patch.object(self.runner, "_save_model_output") as mock_save:
                     self.runner.execute_model(
                         num_running_requests=1,
                         output_logprobs=False,
@@ -585,13 +584,13 @@ class TestExecuteModel(unittest.TestCase):
         self.runner.execute_model_overlap = Mock()
         self.runner.execute_model_overlap.return_value = None
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (Mock(), [0], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (mock_model_output_data, Mock(), Mock(), 0)
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
+                with patch.object(self.runner, "_save_model_output") as mock_save:
                     self.runner.execute_model(
                         num_running_requests=1,
                         output_logprobs=False,
@@ -637,26 +636,19 @@ class TestExecuteModelNormal(unittest.TestCase):
         mock_post_process_event = Mock()
         mock_token_num_event = Mock()
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
-            mock_preprocess_execute.return_value = (
-                mock_model_output,
-                [0],
-                mock_token_num_event
-            )
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
+            mock_preprocess_execute.return_value = (mock_model_output, [0], mock_token_num_event)
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (
                     mock_model_output_data,
                     mock_sampler_output,
                     mock_post_process_event,
-                    0
+                    0,
                 )
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
-                    self.runner.execute_model_normal(
-                        model_forward_batch=[Mock()],
-                        num_running_requests=1
-                    )
+                with patch.object(self.runner, "_save_model_output") as mock_save:
+                    self.runner.execute_model_normal(model_forward_batch=[Mock()], num_running_requests=1)
 
                     # Verify complete flow
                     mock_preprocess_execute.assert_called_once()
@@ -665,18 +657,15 @@ class TestExecuteModelNormal(unittest.TestCase):
 
     def test_execute_model_normal_no_output_data(self):
         """Test execute_model_normal when model_output_data is None."""
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (Mock(), [0], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 # Return None for model_output_data
                 mock_postprocess.return_value = (None, Mock(), Mock(), 0)
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
-                    self.runner.execute_model_normal(
-                        model_forward_batch=[Mock()],
-                        num_running_requests=1
-                    )
+                with patch.object(self.runner, "_save_model_output") as mock_save:
+                    self.runner.execute_model_normal(model_forward_batch=[Mock()], num_running_requests=1)
 
                     # Verify _save_model_output is NOT called when output_data is None
                     mock_save.assert_not_called()
@@ -686,28 +675,22 @@ class TestExecuteModelNormal(unittest.TestCase):
         self.runner.speculative_decoding = True
         mock_model_output_data = Mock()
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (Mock(), [0], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (mock_model_output_data, Mock(), Mock(), 0)
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
-                    self.runner.execute_model_normal(
-                        model_forward_batch=[Mock()],
-                        num_running_requests=1
-                    )
+                with patch.object(self.runner, "_save_model_output") as mock_save:
+                    self.runner.execute_model_normal(model_forward_batch=[Mock()], num_running_requests=1)
 
                     # Verify _save_model_output is NOT called with speculative_decoding
                     mock_save.assert_not_called()
 
     def test_execute_model_normal_empty_batch(self):
         """Test execute_model_normal with empty batch (num_running_requests=0)."""
-        with patch.object(self.runner, '_execute_empty_input') as mock_empty:
-            self.runner.execute_model_normal(
-                model_forward_batch=[],
-                num_running_requests=0
-            )
+        with patch.object(self.runner, "_execute_empty_input") as mock_empty:
+            self.runner.execute_model_normal(model_forward_batch=[], num_running_requests=0)
 
             # Verify empty input handler is called
             mock_empty.assert_called_once()
@@ -717,17 +700,14 @@ class TestExecuteModelNormal(unittest.TestCase):
         self.runner.is_pooling_model = True
         mock_model_output_data = Mock()
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (Mock(), [0], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (mock_model_output_data, Mock(), Mock(), 0)
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
-                    self.runner.execute_model_normal(
-                        model_forward_batch=[Mock()],
-                        num_running_requests=1
-                    )
+                with patch.object(self.runner, "_save_model_output") as mock_save:
+                    self.runner.execute_model_normal(model_forward_batch=[Mock()], num_running_requests=1)
 
                     # Verify _save_model_output is called for pooling model
                     mock_save.assert_called_once()
@@ -736,17 +716,15 @@ class TestExecuteModelNormal(unittest.TestCase):
         """Test execute_model_normal with output_logprobs=True."""
         mock_model_output_data = Mock()
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (Mock(), [0], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (mock_model_output_data, Mock(), Mock(), 0)
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
+                with patch.object(self.runner, "_save_model_output") as mock_save:
                     self.runner.execute_model_normal(
-                        model_forward_batch=[Mock()],
-                        num_running_requests=1,
-                        output_logprobs=True
+                        model_forward_batch=[Mock()], num_running_requests=1, output_logprobs=True
                     )
 
                     # Verify flow is executed with logprobs
@@ -757,17 +735,15 @@ class TestExecuteModelNormal(unittest.TestCase):
         """Test execute_model_normal with output_ids_only=True."""
         mock_model_output_data = Mock()
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (Mock(), [0], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (mock_model_output_data, Mock(), Mock(), 0)
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
+                with patch.object(self.runner, "_save_model_output") as mock_save:
                     self.runner.execute_model_normal(
-                        model_forward_batch=[Mock()],
-                        num_running_requests=1,
-                        output_ids_only=True
+                        model_forward_batch=[Mock()], num_running_requests=1, output_ids_only=True
                     )
 
                     # Verify flow is executed with ids_only
@@ -778,16 +754,15 @@ class TestExecuteModelNormal(unittest.TestCase):
         mock_model_output = Mock()
         mock_model_output_data = Mock()
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (mock_model_output, [0, 1, 2], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (mock_model_output_data, Mock(), Mock(), 3)
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
+                with patch.object(self.runner, "_save_model_output") as mock_save:
                     self.runner.execute_model_normal(
-                        model_forward_batch=[Mock(), Mock(), Mock()],
-                        num_running_requests=3
+                        model_forward_batch=[Mock(), Mock(), Mock()], num_running_requests=3
                     )
 
                     # Verify all requests are processed
@@ -799,17 +774,14 @@ class TestExecuteModelNormal(unittest.TestCase):
         self.runner.enable_mm = True
         mock_model_output_data = Mock()
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (Mock(), [0], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (mock_model_output_data, Mock(), Mock(), 0)
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
-                    self.runner.execute_model_normal(
-                        model_forward_batch=[Mock()],
-                        num_running_requests=1
-                    )
+                with patch.object(self.runner, "_save_model_output") as mock_save:
+                    self.runner.execute_model_normal(model_forward_batch=[Mock()], num_running_requests=1)
 
                     # Verify multimodal flow is executed
                     mock_preprocess_execute.assert_called_once()
@@ -858,32 +830,23 @@ class TestExecuteModelOverlap(unittest.TestCase):
         mock_post_process_event = Mock()
         mock_token_num_event = Mock()
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
-            mock_preprocess_execute.return_value = (
-                mock_model_output,
-                [0],
-                mock_token_num_event
-            )
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
+            mock_preprocess_execute.return_value = (mock_model_output, [0], mock_token_num_event)
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (
                     mock_model_output_data,
                     mock_sampler_output,
                     mock_post_process_event,
-                    10
+                    10,
                 )
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
-                    self.runner.execute_model_overlap(
-                        model_forward_batch=[Mock()],
-                        num_running_requests=1
-                    )
+                with patch.object(self.runner, "_save_model_output") as mock_save:
+                    self.runner.execute_model_overlap(model_forward_batch=[Mock()], num_running_requests=1)
 
                     # Verify save_output is called with previous batch data
                     mock_save.assert_called_once_with(
-                        mock_last_output_data,
-                        mock_last_sampler_output,
-                        mock_last_post_process_event
+                        mock_last_output_data, mock_last_sampler_output, mock_last_post_process_event
                     )
 
                     # Verify state is updated
@@ -900,17 +863,14 @@ class TestExecuteModelOverlap(unittest.TestCase):
         mock_model_output = Mock()
         mock_model_output_data = Mock()
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (mock_model_output, [0], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (mock_model_output_data, Mock(), Mock(), 5)
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
-                    self.runner.execute_model_overlap(
-                        model_forward_batch=[Mock()],
-                        num_running_requests=1
-                    )
+                with patch.object(self.runner, "_save_model_output") as mock_save:
+                    self.runner.execute_model_overlap(model_forward_batch=[Mock()], num_running_requests=1)
 
                     # Verify _save_model_output is NOT called when there's no previous data
                     mock_save.assert_not_called()
@@ -920,17 +880,14 @@ class TestExecuteModelOverlap(unittest.TestCase):
         self.runner.speculative_decoding = True
         self.runner.last_model_output_data = Mock()
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (Mock(), [0], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (Mock(), Mock(), Mock(), 5)
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
-                    self.runner.execute_model_overlap(
-                        model_forward_batch=[Mock()],
-                        num_running_requests=1
-                    )
+                with patch.object(self.runner, "_save_model_output") as mock_save:
+                    self.runner.execute_model_overlap(model_forward_batch=[Mock()], num_running_requests=1)
 
                     # Verify _save_model_output is NOT called with speculative_decoding
                     mock_save.assert_not_called()
@@ -940,17 +897,14 @@ class TestExecuteModelOverlap(unittest.TestCase):
         mock_output_data_1 = Mock()
         mock_output_data_2 = Mock()
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (Mock(), [0], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
-                with patch.object(self.runner, '_save_model_output') as mock_save:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
+                with patch.object(self.runner, "_save_model_output") as mock_save:
                     # First call
                     mock_postprocess.return_value = (mock_output_data_1, Mock(), Mock(), 5)
-                    self.runner.execute_model_overlap(
-                        model_forward_batch=[Mock()],
-                        num_running_requests=1
-                    )
+                    self.runner.execute_model_overlap(model_forward_batch=[Mock()], num_running_requests=1)
 
                     # Verify state is saved
                     self.assertEqual(self.runner.last_model_output_data, mock_output_data_1)
@@ -958,10 +912,7 @@ class TestExecuteModelOverlap(unittest.TestCase):
 
                     # Second call
                     mock_postprocess.return_value = (mock_output_data_2, Mock(), Mock(), 10)
-                    self.runner.execute_model_overlap(
-                        model_forward_batch=[Mock()],
-                        num_running_requests=1
-                    )
+                    self.runner.execute_model_overlap(model_forward_batch=[Mock()], num_running_requests=1)
 
                     # Verify state is updated
                     self.assertEqual(self.runner.last_model_output_data, mock_output_data_2)

@@ -15,13 +15,12 @@
 """End-to-end integration tests for GPUModelRunner."""
 
 import unittest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 import numpy as np
-import paddle
 
-from fastdeploy.worker.gpu_model_runner import GPUModelRunner
 from fastdeploy.engine.request import RequestType
+from fastdeploy.worker.gpu_model_runner import GPUModelRunner
 
 
 class TestGPURunnerE2E(unittest.TestCase):
@@ -75,7 +74,7 @@ class TestGPURunnerE2E(unittest.TestCase):
         """Helper to create mock request."""
         request = Mock()
         request.task_type = Mock()
-        request.task_type.value = task_type.value if hasattr(task_type, 'value') else task_type
+        request.task_type.value = task_type.value if hasattr(task_type, "value") else task_type
         request.idx = idx
         request.request_id = f"req_{idx}"
         request.prompt_token_ids = token_ids if token_ids else [1, 2, 3, 4, 5]
@@ -95,6 +94,7 @@ class TestGPURunnerE2E(unittest.TestCase):
 
         def mock_get(key, default=None):
             return getattr(request, f"_{key}", default)
+
         request.get = mock_get
 
         return request
@@ -103,50 +103,52 @@ class TestGPURunnerE2E(unittest.TestCase):
         """Setup share_inputs mock with required attributes."""
         share_inputs = Mock()
         share_inputs.get_index_by_batch_id = Mock(side_effect=lambda idx: idx)
-        share_inputs.__getitem__ = Mock(side_effect=lambda key: {
-            "req_ids": [""] * 10,
-            "preempted_idx": np.zeros((10, 1), dtype="int32"),
-            "stop_flags": np.zeros((10,), dtype=bool),
-            "seq_lens_decoder": np.zeros((10,), dtype="int32"),
-            "seq_lens_encoder": np.zeros((10,), dtype="int32"),
-            "seq_lens_this_time_buffer": np.zeros((10,), dtype="int32"),
-            "seq_lens_this_time": np.zeros((10,), dtype="int32"),
-            "prompt_ids": np.zeros((10, 512), dtype="int64"),
-            "input_ids": np.zeros((10, 512), dtype="int64"),
-            "encoder_block_lens": np.zeros((10,), dtype="int32"),
-            "block_tables": np.full((10, 128), -1, dtype="int32"),
-            "step_seq_lens_decoder": np.zeros((10,), dtype="int32"),
-            "prompt_lens": np.zeros((10,), dtype="int32"),
-            "is_block_step": np.zeros((10,), dtype=bool),
-            "is_chunk_step": np.zeros((10,), dtype=bool),
-            "step_idx": np.zeros((10,), dtype="int32"),
-            "pre_ids": np.full((10, 1), -1, dtype="int64"),
-            "eos_token_id": np.zeros((1, 1), dtype="int64"),
-            "top_p": np.zeros((10,), dtype="float32"),
-            "top_k": np.zeros((10,), dtype="int32"),
-            "top_k_list": np.zeros((10,), dtype="int32"),
-            "min_p": np.zeros((10,), dtype="float32"),
-            "min_p_list": np.zeros((10,), dtype="float32"),
-            "temperature": np.zeros((10,), dtype="float32"),
-            "penalty_score": np.ones((10,), dtype="float32"),
-            "frequency_score": np.zeros((10,), dtype="float32"),
-            "presence_score": np.zeros((10,), dtype="float32"),
-            "temp_scaled_logprobs": np.zeros((10,), dtype=bool),
-            "top_p_normalized_logprobs": np.zeros((10,), dtype=bool),
-            "min_dec_len": np.zeros((10,), dtype="int32"),
-            "max_dec_len": np.zeros((10,), dtype="int32"),
-            "first_token_ids": np.zeros((10, 1), dtype="int64"),
-            "infer_seed": np.zeros((10,), dtype="int64"),
-            "bad_tokens_len": np.ones((10,), dtype="int32"),
-            "bad_tokens": np.full((10, 1), -1, dtype="int64"),
-            "stop_seqs_len": np.zeros((10, 4), dtype="int32"),
-            "stop_seqs": np.zeros((10, 4, 10), dtype="int64"),
-            "not_need_stop": np.zeros((1,), dtype="int32"),
-            "logits_processors_args": [{}] * 10,
-            "enable_thinking": np.zeros((10, 1), dtype="int32"),
-            "max_think_lens": np.full((10, 1), -1, dtype="int32"),
-            "limit_think_status": np.zeros((10, 1), dtype="int32"),
-        }[key])
+        share_inputs.__getitem__ = Mock(
+            side_effect=lambda key: {
+                "req_ids": [""] * 10,
+                "preempted_idx": np.zeros((10, 1), dtype="int32"),
+                "stop_flags": np.zeros((10,), dtype=bool),
+                "seq_lens_decoder": np.zeros((10,), dtype="int32"),
+                "seq_lens_encoder": np.zeros((10,), dtype="int32"),
+                "seq_lens_this_time_buffer": np.zeros((10,), dtype="int32"),
+                "seq_lens_this_time": np.zeros((10,), dtype="int32"),
+                "prompt_ids": np.zeros((10, 512), dtype="int64"),
+                "input_ids": np.zeros((10, 512), dtype="int64"),
+                "encoder_block_lens": np.zeros((10,), dtype="int32"),
+                "block_tables": np.full((10, 128), -1, dtype="int32"),
+                "step_seq_lens_decoder": np.zeros((10,), dtype="int32"),
+                "prompt_lens": np.zeros((10,), dtype="int32"),
+                "is_block_step": np.zeros((10,), dtype=bool),
+                "is_chunk_step": np.zeros((10,), dtype=bool),
+                "step_idx": np.zeros((10,), dtype="int32"),
+                "pre_ids": np.full((10, 1), -1, dtype="int64"),
+                "eos_token_id": np.zeros((1, 1), dtype="int64"),
+                "top_p": np.zeros((10,), dtype="float32"),
+                "top_k": np.zeros((10,), dtype="int32"),
+                "top_k_list": np.zeros((10,), dtype="int32"),
+                "min_p": np.zeros((10,), dtype="float32"),
+                "min_p_list": np.zeros((10,), dtype="float32"),
+                "temperature": np.zeros((10,), dtype="float32"),
+                "penalty_score": np.ones((10,), dtype="float32"),
+                "frequency_score": np.zeros((10,), dtype="float32"),
+                "presence_score": np.zeros((10,), dtype="float32"),
+                "temp_scaled_logprobs": np.zeros((10,), dtype=bool),
+                "top_p_normalized_logprobs": np.zeros((10,), dtype=bool),
+                "min_dec_len": np.zeros((10,), dtype="int32"),
+                "max_dec_len": np.zeros((10,), dtype="int32"),
+                "first_token_ids": np.zeros((10, 1), dtype="int64"),
+                "infer_seed": np.zeros((10,), dtype="int64"),
+                "bad_tokens_len": np.ones((10,), dtype="int32"),
+                "bad_tokens": np.full((10, 1), -1, dtype="int64"),
+                "stop_seqs_len": np.zeros((10, 4), dtype="int32"),
+                "stop_seqs": np.zeros((10, 4, 10), dtype="int64"),
+                "not_need_stop": np.zeros((1,), dtype="int32"),
+                "logits_processors_args": [{}] * 10,
+                "enable_thinking": np.zeros((10, 1), dtype="int32"),
+                "max_think_lens": np.full((10, 1), -1, dtype="int32"),
+                "limit_think_status": np.zeros((10, 1), dtype="int32"),
+            }[key]
+        )
 
         share_inputs.__setitem__ = Mock(side_effect=lambda key, value: setattr(share_inputs, f"_{key}", value))
 
@@ -168,17 +170,14 @@ class TestGPURunnerE2E(unittest.TestCase):
         self.assertTrue(self.runner.exist_prefill_flag)
 
         # 3. Mock execute model
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (Mock(), [], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (Mock(), Mock(), Mock(), 5)
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
-                    self.runner.execute_model_normal(
-                        model_forward_batch=[prefill_req],
-                        num_running_requests=1
-                    )
+                with patch.object(self.runner, "_save_model_output") as mock_save:
+                    self.runner.execute_model_normal(model_forward_batch=[prefill_req], num_running_requests=1)
 
                     # Verify flow is executed
                     mock_preprocess_execute.assert_called_once()
@@ -228,26 +227,18 @@ class TestGPURunnerE2E(unittest.TestCase):
         self.assertTrue(self.runner.exist_prefill_flag)
 
         # Simulate decode step
-        decode_req = self._create_mock_request(
-            task_type=RequestType.DECODE,
-            idx=0,
-            token_ids=[],
-            output_ids=[10, 20]
-        )
+        decode_req = self._create_mock_request(task_type=RequestType.DECODE, idx=0, token_ids=[], output_ids=[10, 20])
         decode_req.output_token_ids = [10, 20]
 
         # Mock execution
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (Mock(), [], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (Mock(), Mock(), Mock(), 5)
 
-                with patch.object(self.runner, '_save_model_output'):
-                    self.runner.execute_model_normal(
-                        model_forward_batch=[decode_req],
-                        num_running_requests=1
-                    )
+                with patch.object(self.runner, "_save_model_output"):
+                    self.runner.execute_model_normal(model_forward_batch=[decode_req], num_running_requests=1)
 
         # Clear requests
         self.runner.clear_requests()

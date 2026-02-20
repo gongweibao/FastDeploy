@@ -425,6 +425,521 @@ self.runner.fd_config = self.mock_fd_config
 - `__init__` 中的初始化逻辑未被测试
 - 属性设置代码在每个测试文件重复，维护困难
 
+**⚠️ 注意：对于GPUModelRunner这样的大型类，直接调用`__init__`确实存在困难：**
+1. 依赖复杂：需要完整的fd_config、device、device_id、rank、local_rank等参数
+2. 资源消耗：可能需要加载实际模型、分配GPU内存等
+3. 初始化时间：可能非常慢
+4. 测试隔离：可能与实际环境冲突
+
+---
+
+### 3.2.1 更好的替代方案
+
+#### 方案1：使用Test Configuration Factory（推荐用于unittest）
+
+```python
+# tests/worker/test_helpers/runner_factory.py
+"""GPUModelRunner测试辅助工具"""
+
+from unittest.mock import Mock, patch
+
+class TestFDConfig:
+    """专门为测试创建的配置"""
+
+    @staticmethod
+    def create_minimal():
+        """创建最小可用配置"""
+        fd_config = Mock()
+
+        # Model config
+        fd_config.model_config = Mock(
+            max_model_len=4096,
+            eos_tokens_lens=1,
+            max_stop_seqs_num=4,
+            enable_mm=False,
+            enable_logprob=False,
+            ori_vocab_size=32000,
+            dtype='float16',
+            num_hidden_layers=24,
+            hidden_size=4096,
+            vocab_size=32000,
+            head_dim=128,
+            kv_num_heads=32,
+        )
+
+        # Scheduler config
+        fd_config.scheduler_config = Mock(
+            max_num_seqs=10,
+            splitwise_role='mixed',
+        )
+
+        # Cache config
+        fd_config.cache_config = Mock(
+            block_size=16,
+            num_gpu_blocks=100,
+            num_cpu_blocks=0,
+            max_num_blocks=100,
+            enable_prefix_caching=False,
+            enable_chunked_prefill=False,
+            use_mla_cache=False,
+            kvcache_storage_backend=None,
+            kv_cache_dtype='float16',
+        )
+
+        # Parallel config
+        fd_config.parallel_config = Mock(
+            tensor_parallel_size=1,
+            pipeline_parallel_size=1,
+            use_ep=False,
+            enable_chunked_moe=False,
+        )
+
+        # Graph optimization config
+        fd_config.graph_opt_config = Mock(
+            use_cudagraph=False,
+            cudagraph_capture_sizes=[],
+            cudagraph_capture_sizes_prefill=[],
+            sot_warmup_sizes=[],
+            cudagraph_only_prefill=False,
+        )
+
+        # Speculative config
+        fd_config.speculative_config = Mock(
+            method=None,
+            num_speculative_tokens=0,
+            num_gpu_block_expand_ratio=0,
+        )
+
+        # Other configs
+        fd_config.routing_replay_config = Mock(enable_routing_replay=False)
+        fd_config.early_stop_config = Mock(enable_early_stop=False)
+
+        return fd_config
+
+
+class GPUModelRunnerTestFactory:
+    """GPUModelRunner测试工厂"""
+
+    @classmethod
+    def create_minimal(cls, **config_overrides):
+        """
+        创建最小配置的runner - 用于简单方法测试
+        保留__new__方式但封装减少重复
+        """
+        fd_config = TestFDConfig.create_minimal()
+
+        # 应用配置覆盖
+        cls._apply_config_overrides(fd_config, config_overrides)
+
+        # Patch耗时操作
+        with patch('fastdeploy.worker.gpu_model_runner.get_model_loader'):
+            mock_loader = Mock()
+            mock_model = Mock(
+                eval=lambda x: x,
+                parameters=lambda: [],
+                layers=[],
+            )
+            mock_loader.return_value = mock_model
+
+            with patch('fastdeploy.worker.gpu_model_runner.set_data_ipc'):
+                with patch('fastdeploy.worker.gpu_model_runner.share_external_data'):
+                    with patch('fastdeploy.worker.gpu_model_runner.unset_data_ipc'):
+                        runner = GPUModelRunner.__new__(GPUModelRunner)
+                        runner.fd_config = fd_config
+                        runner.model_config = fd_config.model_config
+                        runner.scheduler_config = fd_config.scheduler_config
+                        runner.cache_config = fd_config.cache_config
+                        runner.parallel_config = fd_config.parallel_config
+                        runner.speculative_config = fd_config.speculative_config
+                        runner.routing_replay_config = fd_config.routing_replay_config
+                        runner.graph_opt_config = fd_config.graph_opt_config
+
+                        # 设置必需的运行时属性
+                        runner.speculative_method = fd_config.speculative_config.method
+                        runner.speculative_decoding = False
+                        runner.enable_mm = fd_config.model_config.enable_mm
+                        runner.is_pooling_model = False
+                        runner.ori_vocab_size = fd_config.model_config.ori_vocab_size
+                        runner.enable_logprob = fd_config.model_config.enable_logprob
+                        runner.enable_early_stop = False
+                        runner.max_logprobs = None
+                        runner.temp_scaled_logprobs = True
+                        runner.top_p_normalized_logprobs = True
+                        runner.prompt_logprobs_reqs = {}
+                        runner.in_progress_prompt_logprobs = {}
+                        runner.forward_batch_reqs_list = [None] * 10
+                        runner.cache_kvs_map = {}
+                        runner.exist_prefill_flag = False
+                        runner.pooling_params = []
+
+                        # Vision相关
+                        if runner.enable_mm:
+                            runner.encoder_cache = {}
+                            runner.rope3d_cache = {}
+                        else:
+                            runner.encoder_cache = None
+                            runner.rope3d_cache = None
+
+                        # 初始化其他属性
+                        runner.sampler = cls._create_mock_sampler(fd_config)
+                        runner.guided_backend = None
+                        runner.forward_meta = None
+                        runner.share_inputs = cls._create_mock_share_inputs(fd_config)
+                        runner.use_cudagraph = fd_config.graph_opt_config.use_cudagraph
+                        runner.cudagraph_capture_sizes = fd_config.graph_opt_config.cudagraph_capture_sizes
+                        runner.enable_overlap_schedule = False
+                        runner.last_model_output_data = None
+                        runner.last_sampler_output = None
+                        runner.last_post_process_event = None
+                        runner.last_token_num = -1
+
+                        return runner
+
+    @classmethod
+    def create_with_real_init(cls, **config_overrides):
+        """
+        创建并完整初始化的runner - 用于集成测试
+        patch掉耗时的GPU操作但保留核心初始化逻辑
+        """
+        fd_config = TestFDConfig.create_minimal()
+        cls._apply_config_overrides(fd_config, config_overrides)
+
+        # Patch耗时操作
+        with patch('fastdeploy.worker.gpu_model_runner.get_model_loader') as mock_loader:
+            mock_model = Mock(
+                eval=lambda x: x,
+                parameters=lambda: [],
+                layers=[],
+            )
+            mock_loader.return_value = mock_model
+
+            with patch('fastdeploy.worker.gpu_model_runner.set_data_ipc'):
+                with patch('fastdeploy.worker.gpu_model_runner.share_external_data'):
+                    with patch('fastdeploy.worker.gpu_model_runner.unset_data_ipc'):
+                        with patch('paddle.device.cuda.empty_cache'):
+                            runner = GPUModelRunner(
+                                fd_config=fd_config,
+                                device='cpu',  # 使用CPU避免GPU依赖
+                                device_id=0,
+                                rank=0,
+                                local_rank=0,
+                            )
+                            # 初始化必要的资源
+                            runner.initialize_kv_cache(profile=False)
+                            runner.initialize_forward_meta()
+                            return runner
+
+    @staticmethod
+    def _apply_config_overrides(fd_config, overrides):
+        """应用配置覆盖"""
+        if not overrides:
+            return
+
+        for key, value in overrides.items():
+            if '.' in key:
+                # 支持嵌套配置，如 'model_config.max_model_len'
+                parts = key.split('.')
+                obj = fd_config
+                for part in parts[:-1]:
+                    obj = getattr(obj, part)
+                setattr(obj, parts[-1], value)
+            else:
+                setattr(fd_config, key, value)
+
+    @staticmethod
+    def _create_mock_sampler(fd_config):
+        """创建mock sampler"""
+        mock_sampler = Mock()
+        mock_sampler.compute_logprobs = Mock(return_value=Mock())
+        mock_sampler.sample = Mock(return_value=(Mock(), Mock(), Mock()))
+        return mock_sampler
+
+    @staticmethod
+    def _create_mock_share_inputs(fd_config):
+        """创建mock share_inputs"""
+        mock_inputs = Mock()
+        mock_inputs.get_index_by_batch_id = Mock(side_effect=lambda idx: idx)
+        mock_inputs.__getitem__ = Mock(side_effect=lambda key: Mock())
+        mock_inputs.update = Mock()
+        mock_inputs.reset_share_inputs = Mock()
+        return mock_inputs
+
+
+# 测试中使用
+import unittest
+
+class TestSimpleMethods(unittest.TestCase):
+    """简单方法测试"""
+
+    def setUp(self):
+        # 使用工厂，简洁且完整
+        self.runner = GPUModelRunnerTestFactory.create_minimal(
+            model_config__max_model_len=2048,
+        )
+
+    def test_exist_prefill(self):
+        """简单状态检查"""
+        self.runner.share_inputs = {"seq_lens_encoder": Mock(return_value=Mock())}
+        self.assertTrue(self.runner.exist_prefill())
+
+
+class TestExecuteModel(unittest.TestCase):
+    """核心执行测试"""
+
+    def setUp(self):
+        # 使用真实初始化，但patch耗时操作
+        self.runner = GPUModelRunnerTestFactory.create_with_real_init(
+            model_config__max_model_len=2048,
+        )
+
+    def test_execute_model_normal(self):
+        """测试实际执行流程"""
+        # runner已完整初始化，包括kv_cache和forward_meta
+        # 只需要patch具体的模型前向传播
+        with patch.object(self.runner.model, 'forward') as mock_forward:
+            mock_forward.return_value = paddle.zeros((10, 32000))
+            # 可以测试真实执行路径
+            pass
+```
+
+#### 方案2：使用Pytest Fixture（如果项目使用pytest）
+
+```python
+# tests/worker/conftest.py
+import pytest
+from unittest.mock import Mock, patch
+
+@pytest.fixture
+def minimal_fd_config():
+    """最小测试配置fixture"""
+    config = Mock()
+    config.model_config = Mock(
+        max_model_len=4096,
+        enable_mm=False,
+    )
+    config.scheduler_config = Mock(
+        max_num_seqs=10,
+        splitwise_role='mixed',
+    )
+    config.cache_config = Mock(
+        block_size=16,
+        num_gpu_blocks=100,
+    )
+    config.parallel_config = Mock(
+        tensor_parallel_size=1,
+        use_ep=False,
+    )
+    config.graph_opt_config = Mock(
+        use_cudagraph=False,
+    )
+    config.speculative_config = Mock(
+        method=None,
+    )
+    config.routing_replay_config = Mock(
+        enable_routing_replay=False,
+    )
+    return config
+
+@pytest.fixture
+def test_runner(minimal_fd_config):
+    """测试用runner fixture"""
+    with patch('fastdeploy.worker.gpu_model_runner.get_model_loader') as mock_loader:
+        mock_model = Mock(
+            eval=lambda x: x,
+            parameters=lambda: [],
+            layers=[],
+        )
+        mock_loader.return_value = mock_model
+        minimal_fd_config.model_loader = mock_loader
+
+        with patch('fastdeploy.worker.gpu_model_runner.set_data_ipc'):
+            with patch('fastdeploy.worker.gpu_model_runner.share_external_data'):
+                with patch('fastdeploy.worker.gpu_model_runner.unset_data_ipc'):
+                    return GPUModelRunner(
+                        fd_config=minimal_fd_config,
+                        device='cpu',
+                        device_id=0,
+                        rank=0,
+                        local_rank=0,
+                    )
+
+@pytest.fixture
+def runner_with_mm(test_runner):
+    """带多模态的runner"""
+    test_runner.enable_mm = True
+    test_runner.model_config.enable_mm = True
+    test_runner.encoder_cache = {}
+    return test_runner
+
+# 测试中使用
+class TestExecuteModel:
+    """pytest测试类 - 无需setUp"""
+
+    def test_normal_execution(self, test_runner):
+        """自动注入test_runner，无需setUp"""
+        with patch.object(test_runner.model, 'forward'):
+            test_runner.execute_model_normal([], 0)
+
+    def test_with_mm(self, runner_with_mm):
+        """自动注入runner_with_mm"""
+        result = runner_with_mm.execute_model_normal([], 0)
+
+
+def test_simple_method(test_runner):
+    """函数式测试也支持"""
+    test_runner.share_inputs = {"seq_lens_encoder": Mock()}
+    assert test_runner.exist_prefill()
+```
+
+#### 方案3：Builder Pattern（适用于复杂配置场景）
+
+```python
+# tests/worker/test_helpers/runner_builder.py
+
+class GPUModelRunnerTestBuilder:
+    """GPUModelRunner测试构建器 - 链式API"""
+
+    def __init__(self):
+        self._fd_config = TestFDConfig.create_minimal()
+        self._patches = []
+
+    def with_device(self, device='cpu'):
+        """设置设备"""
+        self._device = device
+        return self
+
+    def with_max_num_seqs(self, num):
+        """设置最大序列数"""
+        self._fd_config.scheduler_config.max_num_seqs = num
+        return self
+
+    def with_enable_mm(self, enable=True):
+        """启用多模态"""
+        self._fd_config.model_config.enable_mm = enable
+        return self
+
+    def with_enable_speculative(self, method='mtp', num_tokens=4):
+        """启用推测解码"""
+        self._fd_config.speculative_config.method = method
+        self._fd_config.speculative_config.num_speculative_tokens = num_tokens
+        return self
+
+    def with_enable_cudagraph(self, enable=True):
+        """启用CUDA Graph"""
+        self._fd_config.graph_opt_config.use_cudagraph = enable
+        return self
+
+    def with_kv_cache(self, num_blocks=100, block_size=16):
+        """配置KV Cache"""
+        self._fd_config.cache_config.num_gpu_blocks = num_blocks
+        self._fd_config.cache_config.block_size = block_size
+        return self
+
+    def patch_load_model(self):
+        """patch模型加载"""
+        self._patches.append(
+            patch('fastdeploy.worker.gpu_model_runner.get_model_loader')
+        )
+        return self
+
+    def build(self):
+        """构建runner实例"""
+        # 应用所有patch
+        context_managers = [p.start() for p in self._patches]
+        for ctx in context_managers:
+            ctx.__enter__()
+
+        # 使用__new__但工厂封装
+        with patch('fastdeploy.worker.gpu_model_runner.set_data_ipc'):
+            with patch('fastdeploy.worker.gpu_model_runner.share_external_data'):
+                runner = GPUModelRunner.__new__(GPUModelRunner)
+                runner.fd_config = self._fd_config
+                # ... 设置所有属性
+
+                return runner
+
+
+# 测试中使用
+class TestComplexConfig(unittest.TestCase):
+    def setUp(self):
+        # 链式调用，清晰且灵活
+        self.runner = (GPUModelRunnerTestBuilder()
+                     .with_device('cpu')
+                     .with_max_num_seqs(20)
+                     .with_enable_mm(False)
+                     .with_enable_speculative('mtp')
+                     .with_kv_cache(num_blocks=200)
+                     .patch_load_model()
+                     .build())
+```
+
+---
+
+### 3.2.2 方案对比与推荐
+
+| 方案 | 优点 | 缺点 | 适用场景 |
+|------|------|------|----------|
+| **当前`__new__`** | 快速、简单 | 对象不完整、易遗漏 | 简单方法测试 |
+| **Test Config Factory** | 可复用、配置集中 | 需要维护配置结构 | unittest项目（推荐） |
+| **Pytest Fixture** | 自动注入、最优雅 | 需要迁移到pytest | pytest项目 |
+| **Builder Pattern** | 链式调用、清晰 | 代码量稍多 | 复杂配置场景 |
+| **混合方案** | 灵活、针对性强 | 需要多种工具 | 大型项目 |
+
+---
+
+### 3.2.3 针对不同测试类型的推荐
+
+**对于FastDeploy项目，推荐使用混合方案：**
+
+1. **简单方法测试**（如`exist_prefill`、`not_need_stop`）：
+   - 使用 `TestConfigFactory.create_minimal()`
+   - 保留`__new__`方式但封装减少重复代码
+   - 无需完整初始化
+
+2. **核心逻辑测试**（如`execute_model_normal`）：
+   - 使用 `TestConfigFactory.create_with_real_init()`
+   - 真实初始化但patch耗时操作
+   - 测试实际执行路径
+
+3. **集成测试**：
+   - 使用真实初始化的runner
+   - patch外部依赖（如CUDA API）
+   - 测试完整流程
+
+4. **如果项目可以迁移到pytest：**
+   - 优先使用pytest fixture
+   - 可以实现更优雅的自动注入
+
+```python
+# 改进后的测试代码示例
+class TestExecuteModelNormal(unittest.TestCase):
+    """核心执行测试 - 使用真实初始化"""
+
+    def setUp(self):
+        # 使用工厂，简洁清晰
+        self.runner = GPUModelRunnerTestFactory.create_with_real_init(
+            max_num_seqs=10,
+            enable_mm=False,
+        )
+
+    def test_with_real_forward(self):
+        # runner已完整初始化，可以测试真实逻辑
+        with patch.object(self.runner.model, 'forward') as mock_forward:
+            # 配置正确的返回值
+            mock_forward.return_value = (
+                paddle.zeros((10, 768)),  # hidden_states
+                [0],  # num_running_requests
+                Mock(),  # token_num_event
+            )
+
+            result = self.runner.execute_model_normal([mock_req], 1)
+
+            # 验证真实行为，而非mock核心方法
+            mock_forward.assert_called_once()
+```
+
+这样既避免了`__new__`的问题，又保持了测试的可控性和可维护性。
+
 ### 3.3 Mock 设置不完整
 
 **问题描述**：复杂方法的 Mock 没有模拟真实的返回值和副作用。

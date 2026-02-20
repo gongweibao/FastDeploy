@@ -283,3 +283,161 @@ flowchart LR
 | ForwardMeta | `fastdeploy/model_executor/forward_meta.py` |
 | Sampler | `fastdeploy/model_executor/layers/sample/sampler.py` |
 | Request | `fastdeploy/engine/request.py` |
+
+---
+
+## 7. 状态变化机制
+
+### 7.1 状态流转流程图
+
+```mermaid
+flowchart TD
+    subgraph InitState["初始状态"]
+        S0["share_inputs 初始化<br/>- seq_lens_encoder = 0<br/>- seq_lens_decoder = 0<br/>- stop_flags = True<br/>- block_tables = -1<br/>- free_list = [num_blocks-1...0]"]
+    end
+
+    subgraph PrefillState["PREFILL 状态"]
+        S1["插入 PREFILL 请求<br/>- stop_flags = False<br/>- seq_lens_encoder = prompt_len<br/>- seq_lens_decoder = 0<br/>- block_tables = [分配的块]<br/>- is_block_step = False"]
+        S2["Chunked Prefill 继续<br/>- seq_lens_encoder = chunk_len<br/>- is_chunk_step = True"]
+    end
+
+    subgraph DecodeState["DECODE 状态"]
+        S3["首次 DECODE<br/>- seq_lens_encoder = 0<br/>- seq_lens_decoder = 1<br/>- stop_flags = False"]
+        S4["后续 DECODE<br/>- seq_lens_decoder += 1<br/>- seq_lens_this_time = 1"]
+    end
+
+    subgraph PreemptedState["PREEMPTED 状态"]
+        S5["请求被抢占<br/>- stop_flags = True<br/>- seq_lens_this_time = 0<br/>- block_tables = -1"]
+    end
+
+    subgraph StopState["停止状态"]
+        S6["达到停止条件<br/>- stop_flags = True<br/>- 释放 block_tables 到 free_list"]
+    end
+
+    subgraph MultiModalState["多模态特殊状态"]
+        S7["多模态 PREFILL<br/>- 提取 vision_features<br/>- 写入 encoder_cache"]
+        S8["视觉特征缓存命中<br/>- 重用 encoder_cache<br/>- 跳过视觉编码"]
+    end
+
+    S0 --> S1
+    S1 -->|完成 prefill| S3
+    S1 -->|chunked prefill| S2
+    S2 -->|继续 prefill| S2
+    S2 -->|完成| S3
+
+    S3 -->|下一个 token| S4
+    S4 -->|继续 decode| S4
+    S4 -->|达到停止条件| S6
+    S4 -->|内存不足被抢占| S5
+
+    S5 -->|恢复请求| S1
+    S6 --> S0
+
+    S1 -->|多模态输入| S7
+    S7 -->|特征缓存| S8
+    S8 --> S1
+
+    style InitState fill:#e1f5ff
+    style PrefillState fill:#fff4e1
+    style DecodeState fill:#e1ffe1
+    style PreemptedState fill:#ffe1e1
+    style StopState fill:#f5e1ff
+    style MultiModalState fill:#ffe1f5
+```
+
+### 7.2 关键状态字段变化表
+
+| 状态字段 | 初始值 | PREFILL | DECODE | PREEMPTED | FINISHED |
+|---------|--------|---------|--------|-----------|----------|
+| `seq_lens_encoder` | 0 | prompt_len | 0 | 0 | 0 |
+| `seq_lens_decoder` | 0 | 0 | 自增 | 0 | final_len |
+| `seq_lens_this_time` | 0 | prompt_len | 1 | 0 | 0 |
+| `stop_flags` | True | False | False | True | True |
+| `block_tables` | -1 | [分配的块] | [分配的块] | -1 | -1 |
+| `is_block_step` | False | False | False | False | False |
+| `is_chunk_step` | False | chunked? | False | False | False |
+
+### 7.3 KV Cache 块管理状态
+
+```mermaid
+stateDiagram-v2
+    [*] --> FreeBlock: 初始化
+    FreeBlock --> Allocated: 分配给请求
+    Allocated --> InUse: PREFILL/DECODE
+    InUse --> Allocated: 继续使用
+    Allocated --> FreeBlock: 请求完成/抢占
+
+    note right of FreeBlock
+        free_list: [num_blocks-1...0]
+        free_list_len: num_blocks * ratio
+    end note
+
+    note right of Allocated
+        block_tables[batch_id] = [block_ids]
+        block_len = len(block_tables)
+    end note
+```
+
+### 7.4 关键状态更新代码位置
+
+| 状态更新 | 方法 | 位置 |
+|---------|------|------|
+| 初始化状态 | `init_share_inputs()` | [input_batch.py:98](fastdeploy/worker/input_batch.py#L98) |
+| PREFILL 状态 | `insert_tasks_v1()` | [gpu_model_runner.py:720](fastdeploy/worker/gpu_model_runner.py#L720) |
+| DECODE 状态 | `insert_tasks_v1()` | [gpu_model_runner.py:808](fastdeploy/worker/gpu_model_runner.py#L808) |
+| PREEMPTED 状态 | `insert_tasks_v1()` | [gpu_model_runner.py:820](fastdeploy/worker/gpu_model_runner.py#L820) |
+| KV Cache 初始化 | `initialize_kv_cache()` | [gpu_model_runner.py:2690](fastdeploy/worker/gpu_model_runner.py#L2690) |
+| 更新 stop_flags | `_postprocess()` | [gpu_model_runner.py:2354](fastdeploy/worker/gpu_model_runner.py#L2354) |
+| 清除请求 | `clear_requests()` | [gpu_model_runner.py:2796](fastdeploy/worker/gpu_model_runner.py#L2796) |
+
+### 7.5 请求状态枚举
+
+```python
+class RequestStatus(Enum):
+    WAITING = 0      # 等待执行
+    RUNNING = 1      # 正在执行
+    PREEMPTED = 2    # 被抢占
+    FINISHED = 3     # 已完成
+    ABORT = 4        # 已中止
+
+class RequestType(Enum):
+    PREFILL = 0      # 预填充阶段
+    DECODE = 1       # 解码阶段
+    PREEMPTED = 2    # 抢占请求
+    EXTEND = 3       # 扩展请求
+```
+
+### 7.6 状态更新关键代码片段
+
+**PREFILL 状态设置** ([gpu_model_runner.py:720-783](fastdeploy/worker/gpu_model_runner.py#L720-L783)):
+```python
+if request.task_type.value == RequestType.PREFILL.value:
+    self.share_inputs["stop_flags"][idx : idx + 1] = False
+    self.share_inputs["seq_lens_decoder"][idx : idx + 1] = prefill_start_index
+    self.share_inputs["seq_lens_this_time_buffer"][idx : idx + 1] = length
+    self.share_inputs["seq_lens_encoder"][idx : idx + 1] = length
+    self.exist_prefill_flag = True
+    self.share_inputs["is_chunk_step"][idx : idx + 1] = prefill_end_index < len(input_ids)
+```
+
+**DECODE 状态设置** ([gpu_model_runner.py:808-815](fastdeploy/worker/gpu_model_runner.py#L808-L815)):
+```python
+elif request.task_type.value == RequestType.DECODE.value:
+    encoder_block_num = len(request.block_tables)
+    self.share_inputs["encoder_block_lens"][idx : idx + 1] = encoder_block_num
+    self.share_inputs["block_tables"][idx : idx + 1, :] = -1
+    self.share_inputs["block_tables"][idx : idx + 1, :encoder_block_num] = np.array(
+        request.block_tables, dtype="int32"
+    )
+```
+
+**PREEMPTED 状态设置** ([gpu_model_runner.py:820-827](fastdeploy/worker/gpu_model_runner.py#L820-L827)):
+```python
+else:  # preempted task
+    self.share_inputs["preempted_idx"][idx : idx + 1, :] = 1
+    self.share_inputs["block_tables"][idx : idx + 1, :] = -1
+    self.share_inputs["stop_flags"][idx : idx + 1] = True
+    self.share_inputs["seq_lens_this_time_buffer"][idx : idx + 1] = 0
+    self.share_inputs["seq_lens_decoder"][idx : idx + 1] = 0
+    self.share_inputs["seq_lens_encoder"][idx : idx + 1] = 0
+```

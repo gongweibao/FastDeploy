@@ -17,7 +17,6 @@
 import unittest
 from unittest.mock import Mock, patch
 
-import numpy as np
 import paddle
 
 from fastdeploy.worker.gpu_model_runner import GPUModelRunner
@@ -69,7 +68,7 @@ class TestSpeculativeDecoding(unittest.TestCase):
         """Test NgramProposer initialization."""
         self.runner.speculative_method = "ngram"
 
-        with patch('fastdeploy.worker.gpu_model_runner.NgramProposer') as mock_ngram_proposer:
+        with patch("fastdeploy.worker.gpu_model_runner.NgramProposer") as mock_ngram_proposer:
             mock_ngram_proposer.return_value = Mock()
 
             self.runner._init_speculative_proposer()
@@ -87,19 +86,13 @@ class TestSpeculativeDecoding(unittest.TestCase):
         mock_model = Mock()
         self.runner.get_model = Mock(return_value=mock_model)
 
-        with patch('fastdeploy.worker.gpu_model_runner.MTPProposer') as mock_mtp_proposer:
+        with patch("fastdeploy.worker.gpu_model_runner.MTPProposer") as mock_mtp_proposer:
             mock_mtp_proposer.return_value = Mock()
 
             self.runner._init_speculative_proposer()
 
             # Verify MTPProposer is created with correct parameters
-            mock_mtp_proposer.assert_called_once_with(
-                self.mock_fd_config,
-                mock_model,
-                0,
-                0,
-                self.runner.share_inputs
-            )
+            mock_mtp_proposer.assert_called_once_with(self.mock_fd_config, mock_model, 0, 0, self.runner.share_inputs)
             self.assertIsNotNone(self.runner.proposer)
 
     def test_mtp_kvcache_calculation(self):
@@ -124,17 +117,14 @@ class TestSpeculativeDecoding(unittest.TestCase):
 
         mock_model_output_data = Mock()
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (Mock(), [0], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (mock_model_output_data, Mock(), Mock(), 0)
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
-                    self.runner.execute_model_normal(
-                        model_forward_batch=[Mock()],
-                        num_running_requests=1
-                    )
+                with patch.object(self.runner, "_save_model_output") as mock_save:
+                    self.runner.execute_model_normal(model_forward_batch=[Mock()], num_running_requests=1)
 
                     # With speculative decoding, _save_model_output should NOT be called
                     mock_save.assert_not_called()
@@ -145,17 +135,14 @@ class TestSpeculativeDecoding(unittest.TestCase):
         self.runner.use_cudagraph = False
         self.runner.last_model_output_data = Mock()
 
-        with patch.object(self.runner, '_preprocess_and_execute_model') as mock_preprocess_execute:
+        with patch.object(self.runner, "_preprocess_and_execute_model") as mock_preprocess_execute:
             mock_preprocess_execute.return_value = (Mock(), [0], Mock())
 
-            with patch.object(self.runner, '_postprocess') as mock_postprocess:
+            with patch.object(self.runner, "_postprocess") as mock_postprocess:
                 mock_postprocess.return_value = (Mock(), Mock(), Mock(), 0)
 
-                with patch.object(self.runner, '_save_model_output') as mock_save:
-                    self.runner.execute_model_overlap(
-                        model_forward_batch=[Mock()],
-                        num_running_requests=1
-                    )
+                with patch.object(self.runner, "_save_model_output") as mock_save:
+                    self.runner.execute_model_overlap(model_forward_batch=[Mock()], num_running_requests=1)
 
                     # With speculative decoding, _save_model_output should NOT be called
                     mock_save.assert_not_called()
@@ -215,10 +202,7 @@ class TestChunkedPrefill(unittest.TestCase):
         batch_size = 4
 
         input_length_list, max_dec_len_list, block_num = self.runner.get_input_length_list(
-            num_tokens=num_tokens,
-            batch_size=batch_size,
-            expected_decode_len=100,
-            capture_prefill=True
+            num_tokens=num_tokens, batch_size=batch_size, expected_decode_len=100, capture_prefill=True
         )
 
         # Verify total tokens sum to num_tokens
@@ -231,22 +215,14 @@ class TestChunkedPrefill(unittest.TestCase):
 
         # Simulate chunked prefill with state restoration
         req_id = "req_1"
-        chunk_state = {
-            "prefill_start_index": 0,
-            "prefill_end_index": 100,
-            "prompt_token_ids": list(range(200))
-        }
+        chunk_state = {"prefill_start_index": 0, "prefill_end_index": 100, "prompt_token_ids": list(range(200))}
 
         self.runner.restore_chunked_prefill_request[req_id] = chunk_state
 
         # Verify state is stored
         self.assertIn(req_id, self.runner.restore_chunked_prefill_request)
-        self.assertEqual(
-            self.runner.restore_chunked_prefill_request[req_id]["prefill_start_index"], 0
-        )
-        self.assertEqual(
-            self.runner.restore_chunked_prefill_request[req_id]["prefill_end_index"], 100
-        )
+        self.assertEqual(self.runner.restore_chunked_prefill_request[req_id]["prefill_start_index"], 0)
+        self.assertEqual(self.runner.restore_chunked_prefill_request[req_id]["prefill_end_index"], 100)
 
     def test_chunked_prefill_with_pooling(self):
         """Test chunked prefill with pooling model."""
@@ -276,10 +252,7 @@ class TestChunkedPrefill(unittest.TestCase):
         batch_size = 1
 
         input_length_list, max_dec_len_list, block_num = self.runner.get_input_length_list(
-            num_tokens=num_tokens,
-            batch_size=batch_size,
-            expected_decode_len=100,
-            capture_prefill=True
+            num_tokens=num_tokens, batch_size=batch_size, expected_decode_len=100, capture_prefill=True
         )
 
         # Total should still equal num_tokens
@@ -452,7 +425,7 @@ class TestMemoryPressure(unittest.TestCase):
         self.runner.forward_meta = None
         self.runner.use_cudagraph = False
 
-        with patch('paddle.device.cuda.empty_cache') as mock_empty_cache:
+        with patch("paddle.device.cuda.empty_cache") as mock_empty_cache:
             mock_empty_cache.return_value = None
 
             self.runner.clear_cache(profile=False)
@@ -495,9 +468,7 @@ class TestVisionFeatureExtraction(unittest.TestCase):
 
         # Verify cache hit
         self.assertIn(mm_hash, self.runner.encoder_cache)
-        self.assertEqual(
-            self.runner.encoder_cache[mm_hash].shape, cached_features.shape
-        )
+        self.assertEqual(self.runner.encoder_cache[mm_hash].shape, cached_features.shape)
 
     def test_vision_cache_miss(self):
         """Test vision encoder cache miss scenario."""

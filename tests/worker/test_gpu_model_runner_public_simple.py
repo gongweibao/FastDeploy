@@ -15,7 +15,7 @@
 """Unit tests for simple public methods of GPUModelRunner."""
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import numpy as np
 import paddle
@@ -113,13 +113,13 @@ class TestInsertPrefillInputs(unittest.TestCase):
         request.task_type.value = task_type
         request.idx = idx
         request.request_id = f"req_{idx}"
-        request.prompt_token_ids = kwargs.get('prompt_token_ids', [1, 2, 3, 4, 5])
+        request.prompt_token_ids = kwargs.get("prompt_token_ids", [1, 2, 3, 4, 5])
         request.output_token_ids = []
-        request.block_tables = kwargs.get('block_tables', [0, 1, 2])
+        request.block_tables = kwargs.get("block_tables", [0, 1, 2])
         request.eos_token_ids = [0]
         request.prefill_start_index = 0
         request.prefill_end_index = len(request.prompt_token_ids)
-        request.sampling_params = kwargs.get('sampling_params', Mock())
+        request.sampling_params = kwargs.get("sampling_params", Mock())
         request.sampling_params.prompt_logprobs = None
         request.sampling_params.stop_seqs_len = []
         request.sampling_params.min_tokens = 1
@@ -132,6 +132,7 @@ class TestInsertPrefillInputs(unittest.TestCase):
 
         def mock_get(key, default=None):
             return kwargs.get(key, default)
+
         request.get = mock_get
 
         return request
@@ -140,28 +141,30 @@ class TestInsertPrefillInputs(unittest.TestCase):
         """Setup share_inputs mock with required attributes."""
         share_inputs = Mock()
         share_inputs.get_index_by_batch_id = Mock(side_effect=lambda idx: idx)
-        share_inputs.__getitem__ = Mock(side_effect=lambda key: {
-            "req_ids": [""] * 10,
-            "stop_flags": np.zeros(10, dtype=bool),
-            "seq_lens_decoder": np.zeros(10, dtype="int32"),
-            "seq_lens_encoder": np.zeros(10, dtype="int32"),
-            "seq_lens_this_time_buffer": np.zeros(10, dtype="int32"),
-            "prompt_ids": np.zeros((10, 512), dtype="int64"),
-            "input_ids": np.zeros((10, 512), dtype="int64"),
-            "block_tables": np.full((10, 128), -1, dtype="int32"),
-            "step_seq_lens_decoder": np.zeros(10, dtype="int32"),
-            "prompt_lens": np.zeros(10, dtype="int32"),
-            "top_p": np.zeros(10, dtype="float32"),
-            "top_k": np.zeros(10, dtype="int32"),
-            "temperature": np.zeros(10, dtype="float32"),
-            "penalty_score": np.ones(10, dtype="float32"),
-            "frequency_score": np.zeros(10, dtype="float32"),
-            "presence_score": np.zeros(10, dtype="float32"),
-            "max_dec_len": np.zeros(10, dtype="int32"),
-            "min_dec_len": np.zeros(10, dtype="int32"),
-            "eos_token_id": np.zeros((1, 1), dtype="int64"),
-            "infer_seed": np.zeros(10, dtype="int64"),
-        }[key])
+        share_inputs.__getitem__ = Mock(
+            side_effect=lambda key: {
+                "req_ids": [""] * 10,
+                "stop_flags": np.zeros(10, dtype=bool),
+                "seq_lens_decoder": np.zeros(10, dtype="int32"),
+                "seq_lens_encoder": np.zeros(10, dtype="int32"),
+                "seq_lens_this_time_buffer": np.zeros(10, dtype="int32"),
+                "prompt_ids": np.zeros((10, 512), dtype="int64"),
+                "input_ids": np.zeros((10, 512), dtype="int64"),
+                "block_tables": np.full((10, 128), -1, dtype="int32"),
+                "step_seq_lens_decoder": np.zeros(10, dtype="int32"),
+                "prompt_lens": np.zeros(10, dtype="int32"),
+                "top_p": np.zeros(10, dtype="float32"),
+                "top_k": np.zeros(10, dtype="int32"),
+                "temperature": np.zeros(10, dtype="float32"),
+                "penalty_score": np.ones(10, dtype="float32"),
+                "frequency_score": np.zeros(10, dtype="float32"),
+                "presence_score": np.zeros(10, dtype="float32"),
+                "max_dec_len": np.zeros(10, dtype="int32"),
+                "min_dec_len": np.zeros(10, dtype="int32"),
+                "eos_token_id": np.zeros((1, 1), dtype="int64"),
+                "infer_seed": np.zeros(10, dtype="int64"),
+            }[key]
+        )
         return share_inputs
 
     def test_insert_prefill_inputs_basic(self):
@@ -194,14 +197,10 @@ class TestInsertPrefillInputs(unittest.TestCase):
         self.runner.share_inputs = self._setup_share_inputs_mock()
 
         req1 = self._create_mock_request(
-            task_type=self.runner.RequestType.PREFILL.value,
-            idx=0,
-            prompt_token_ids=[1, 2, 3]
+            task_type=self.runner.RequestType.PREFILL.value, idx=0, prompt_token_ids=[1, 2, 3]
         )
         req2 = self._create_mock_request(
-            task_type=self.runner.RequestType.PREFILL.value,
-            idx=1,
-            prompt_token_ids=[4, 5, 6]
+            task_type=self.runner.RequestType.PREFILL.value, idx=1, prompt_token_ids=[4, 5, 6]
         )
 
         # Insert multiple requests
@@ -227,9 +226,7 @@ class TestInsertPrefillInputs(unittest.TestCase):
         sampling_params.bad_tokens_len = 0
 
         req = self._create_mock_request(
-            task_type=self.runner.RequestType.PREFILL.value,
-            idx=0,
-            sampling_params=sampling_params
+            task_type=self.runner.RequestType.PREFILL.value, idx=0, sampling_params=sampling_params
         )
 
         # Insert request with stop sequences

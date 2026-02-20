@@ -2870,3 +2870,528 @@ class InputBuffers:
 - 状态查询方法（exist_prefill, exist_decode, only_prefill, only_decode）
 - 组件委托方法（execute_model, clear_cache, profile_run 等）
 - 辅助方法（_init_speculative_proposer, _init_logits_processor 等）
+
+---
+
+## 测试迁移策略
+
+### 一、当前测试覆盖情况分析
+
+#### 1.1 测试文件概览
+
+| 文件 | 用例数 | 主要功能 |
+|------|--------|----------|
+| test_gpu_model_runner_e2e.py | 7 | 端到端 |
+| test_gpu_model_runner_error_cases.py | 21 | 错误场景 |
+| test_gpu_model_runner_p1_priority.py | 27 | P1功能 |
+| test_gpu_model_runner_public.py | ~90 | 公开方法 |
+| test_gpu_model_runner_public_init.py | ~3 | 初始化 |
+| test_gpu_model_runner_public_simple.py | ~14 | 简单方法 |
+| test_gpu_model_runner_public_vision_execute.py | ~30 | 视觉和执行 |
+
+#### 1.2 公开方法覆盖统计
+
+| 状态 | 数量 | 占比 | 说明 |
+|------|------|------|------|
+| ✅ 完整覆盖 | 18个方法 | 56% | 有实际测试用例，验证逻辑正确性 |
+| ⚠️ 仅签名测试 | 14个方法 | 44% | 只验证方法能被调用，未验证逻辑 |
+| ❌ 未覆盖 | 0个方法 | 0% | 无公开方法遗漏 |
+
+**仅签名测试的方法列表**：
+- `insert_prefill_inputs`
+- `load_model`
+- `initialize_forward_meta`
+- `initialize_kv_cache`
+- `capture_model`
+- `capture_model_prefill_and_mixed`
+- `vision_encoder_compile`
+- `sot_warmup`
+- `profile_run`
+- `clear_parameters`
+- `update_parameters`
+- `padding_cudagraph_inputs`
+- `extract_vision_features_ernie/qwen/paddleocr`
+- `prepare_rope3d`
+
+#### 1.3 已覆盖的典型场景
+
+✅ **Speculative Decoding** - 7个测试用例
+- 禁用状态、NgramProposer、MTPProposer 初始化
+- execute_model 中的处理逻辑
+- 不同 num_speculative_tokens 配置
+
+✅ **Chunked Prefill** - 6个测试用例
+- 大 prompt 分块处理
+- 状态连续性
+- max_chunked_prefill_len 约束
+
+✅ **Prefix Caching** - 6个测试用例
+- 启用/禁用状态
+- cache_kvs_map 存储/检索/清空
+- 与 prompt_logprobs 冲突检查
+
+✅ **内存压力场景** - 4个测试用例
+- KV cache 接近上限
+- GPU↔CPU block 交换
+
+✅ **视觉特征提取缓存** - 6个测试用例
+- encoder_cache 命中/未命中
+- 缓存驱逐
+- Rope3D cache 准备
+
+✅ **端到端流程** - 7个测试用例
+- 完整 prefill → decode → stop 流程
+- 多请求并发处理
+- 采样参数流转
+
+✅ **错误场景** - 21个测试用例
+- 空批次、单 token 序列
+- 无效参数、边界值
+
+#### 1.4 测试质量问题
+
+| 问题 | 严重性 | 说明 |
+|------|--------|------|
+| 仅签名测试 | 高 | 44%的方法只有 try-except 包裹的签名测试 |
+| `__new__` 跳过初始化 | 中 | 手动设置属性，容易遗漏 |
+| Mock 设置不完整 | 中 | 只验证返回值非 None，不验证正确性 |
+| 代码错误 | 低 | 如 `is_pooling_mode` 应为 `is_pooling_model` |
+| 断言过于宽泛 | 中 | 只验证 shape，不验证值 |
+| 缺少真实执行测试 | 高 | 所有执行都是 mock |
+| 测试文件过度分割 | 低 | 7个文件，难以维护 |
+
+---
+
+### 二、重构对测试的影响
+
+#### 2.1 预期失败率分析
+
+| 类别 | 预估失败数 | 占比 | 原因 |
+|------|-----------|------|------|
+| 方法直接调用 | ~40 | ~30% | 方法已迁移到组件，直接调用失败 |
+| 属性访问 | ~20 | ~15% | 内部属性变为组件属性，访问路径变化 |
+| Mock 依赖 | ~30 | ~25% | Mock 结构需要适配新组件结构 |
+| 状态查询 | ~10 | ~8% | 状态查询从 Runner 委托到组件 |
+| 其他 | ~5 | ~4% | 配置变化等 |
+
+**总预期失败率：~70% 的测试用例需要修改**
+
+#### 2.2 受影响的关键测试模式
+
+**模式1：直接调用已迁移的方法**
+```python
+# 旧代码（会失败）
+self.runner.extract_vision_features_ernie(vision_inputs)
+self.runner._process_mm_features(request_list)
+self.runner._postprocess(sampler_output, model_output, ...)
+
+# 新代码（正确方式）
+self.runner.vision_processor.extract_vision_features_ernie(vision_inputs)
+self.runner.vision_processor.process_mm_features(request_list)
+self.runner.output_handler.postprocess(sampler_output, model_output, ...)
+```
+
+**模式2：访问组件属性**
+```python
+# 旧代码（会失败）
+self.runner.encoder_cache[mm_hash] = features
+self.runner.share_inputs["image_features_list"] = [...]
+
+# 新代码（正确方式）
+self.runner.vision_processor.encoder_cache[mm_hash] = features
+self.runner.input_manager.share_inputs["image_features_list"] = [...]
+```
+
+**模式3：Mock 组件方法**
+```python
+# 旧代码（需要调整）
+self.runner.model.vision_encoder.return_value = paddle.zeros((10, 768))
+
+# 新代码（正确方式）
+self.runner.vision_processor.model.vision_encoder.return_value = paddle.zeros((10, 768))
+# 或者创建完整的 VisionProcessor mock
+```
+
+**模式4：测试 execute_model**
+```python
+# 旧代码（测试 Runner 的 execute_model）
+def test_execute_model_normal(self):
+    self.runner.execute_model(batch, ...)
+
+# 新代码（测试流程编排）
+def test_execute_model_normal(self):
+    # 需要确保所有组件都已正确初始化
+    # InferenceFlow 作为无状态编排器，测试重点变为：
+    # 1. 组件调用顺序是否正确
+    # 2. 参数传递是否完整
+    # 3. 错误处理是否完善
+```
+
+---
+
+### 三、测试迁移策略
+
+#### 3.1 方法迁移映射表
+
+| 原方法（GPUModelRunner） | 新位置 | 测试修改方式 |
+|-------------------------|--------|-------------|
+| `insert_tasks_v1` | `input_manager.insert_tasks_v1` | 替换调用路径 |
+| `insert_prefill_inputs` | `input_manager.insert_prefill_inputs` | 替换调用路径 |
+| `_prepare_inputs` | `input_manager.prepare_inputs` | 替换调用路径 |
+| `get_input_length_list` | `input_manager.get_input_length_list` | 替换调用路径，或委托测试 |
+| `clear_requests` | `input_manager.clear_requests` | 替换调用路径 |
+| `exist_prefill/decode` | `input_manager.exist_prefill/decode` | 保持委托调用（兼容） |
+| `only_prefill/decode` | `input_manager.only_prefill/decode` | 保持委托调用（兼容） |
+| `not_need_stop` | `input_manager.not_need_stop` | 保持委托调用（兼容） |
+| `extract_vision_features*` | `vision_processor.*` | 替换调用路径 |
+| `_process_mm_features` | `vision_processor.process_mm_features` | 替换调用路径 |
+| `prepare_rope3d` | `vision_processor.prepare_rope3d` | 替换调用路径 |
+| `_postprocess` | `output_handler.postprocess` | 替换调用路径 |
+| `_save_model_output` | `output_handler.save_model_output` | 替换调用路径 |
+| `_pool` | `output_handler.pool` | 替换调用路径 |
+| `_get_prompt_logprobs_list` | `output_handler.get_prompt_logprobs_list` | 替换调用路径 |
+| `clear_cache` | `cache_manager.clear_cache` | 保持委托调用（兼容） |
+| `update_share_input_block_num` | `cache_manager.update_share_input_block_num` | 保持委托调用（兼容） |
+| `initialize_kv_cache` | `cache_manager.initialize_kv_cache` | 替换调用路径 |
+| `profile_run` | `profile_runner.profile_run` | 保持委托调用（兼容） |
+| `sot_warmup` | `profile_runner.sot_warmup` | 保持委托调用（兼容） |
+| `capture_model` | `profile_runner.capture_model` | 保持委托调用（兼容） |
+| `execute_model` | `inference_flow.execute` | 保持委托调用（兼容） |
+
+#### 3.2 测试用例分类与迁移
+
+**类别 A：委托方法测试（无需修改）**
+
+这些方法通过 Runner 委托到组件，外部接口保持不变：
+
+```python
+# 保持不变
+self.runner.exist_prefill()
+self.runner.exist_decode()
+self.runner.clear_cache()
+self.runner.profile_run()
+self.runner.execute_model(batch, ...)
+```
+
+**类别 B：组件方法测试（修改调用路径）**
+
+需要将调用路径更新为组件路径：
+
+```python
+# 迁移前
+self.runner.extract_vision_features_ernie(vision_inputs)
+
+# 迁移后
+self.runner.vision_processor.extract_vision_features_ernie(vision_inputs)
+```
+
+**类别 C：状态查询测试（更新 Mock 结构）**
+
+需要更新 Mock 的属性路径：
+
+```python
+# 迁移前
+self.runner.encoder_cache[mm_hash] = features
+
+# 迁移后
+self.runner.vision_processor.encoder_cache[mm_hash] = features
+```
+
+**类别 D：集成测试（重构测试逻辑）**
+
+需要重构为验证组件协作而非单一方法：
+
+```python
+# 迁移前：测试单一方法
+def test_insert_tasks_v1(self):
+    self.runner.insert_tasks_v1(req_dicts)
+    self.assertEqual(len(self.runner.share_inputs["prompt_token_ids"]), 3)
+
+# 迁移后：测试组件协作
+def test_insert_tasks_v1(self):
+    self.runner.input_manager.insert_tasks_v1(req_dicts)
+    self.assertEqual(len(self.runner.input_manager.share_inputs.prompt_token_ids), 3)
+    # 新增：验证 VisionProcessor 是否被正确调用
+    if self._has_mm_requests(req_dicts):
+        self.runner.vision_processor.process_mm_features.assert_called()
+```
+
+#### 3.3 测试文件重组建议
+
+建议将 7 个测试文件按组件架构重组：
+
+| 新文件 | 内容 | 说明 |
+|--------|------|------|
+| `test_gpu_model_runner_basic.py` | Runner 基础功能、状态查询、生命周期 | 合并 public 和 public_simple |
+| `test_input_manager.py` | InputManager 所有方法 | 独立组件测试 |
+| `test_vision_processor.py` | VisionProcessor 所有方法 | 独立组件测试 |
+| `test_output_handler.py` | OutputHandler 所有方法 | 独立组件测试 |
+| `test_cache_manager.py` | CacheManager 所有方法 | 独立组件测试 |
+| `test_inference_flow.py` | InferenceFlow 流程编排测试 | 验证组件调用顺序 |
+| `test_gpu_model_runner_integration.py` | 端到端集成测试 | 真实场景验证 |
+| `test_gpu_model_runner_e2e.py` | 端到端真实执行测试 | 使用真实模型 |
+
+---
+
+### 四、测试迁移步骤
+
+#### 第一阶段：准备迁移环境（1-2 天）
+
+1. **创建新测试文件结构**
+   ```bash
+   mkdir -p tests/worker/components
+   mkdir -p tests/worker/flows
+   ```
+
+2. **为每个组件创建测试基类**
+   ```python
+   # tests/worker/components/test_base_component.py
+   class ComponentTestBase(unittest.TestCase):
+       """组件测试基类，提供通用的 Mock 设置"""
+       def setUp(self):
+           self.mock_fd_config = self._create_mock_fd_config()
+           self.mock_model = self._create_mock_model()
+
+       def _create_mock_fd_config(self):
+           # 统一的 Mock 设置
+           pass
+
+       def _create_mock_model(self):
+           # 统一的 Mock 设置
+           pass
+   ```
+
+#### 第二阶段：迁移组件测试（3-5 天）
+
+按组件顺序迁移：
+
+1. **InputManager 测试**
+   - 迁移 `test_insert_tasks_v1` → `test_input_manager.py`
+   - 迁移 `test_insert_prefill_inputs` → `test_input_manager.py`
+   - 迁移 `test_get_input_length_list` → `test_input_manager.py`
+   - 迁移 `test_clear_requests` → `test_input_manager.py`
+
+2. **VisionProcessor 测试**
+   - 迁移所有 vision 相关测试 → `test_vision_processor.py`
+   - 补充真实的特征提取测试（当前仅签名测试）
+
+3. **OutputHandler 测试**
+   - 迁移所有输出处理测试 → `test_output_handler.py`
+   - 包括 postprocess, save_model_output, pool 等
+
+4. **CacheManager 测试**
+   - 迁移 cache 相关测试 → `test_cache_manager.py`
+   - 包括 initialize_kv_cache, clear_cache 等
+
+#### 第三阶段：迁移流程测试（2-3 天）
+
+1. **InferenceFlow 测试**
+   - 创建 `test_inference_flow.py`
+   - 重点验证：
+     - 组件调用顺序
+     - 参数传递完整性
+     - 错误处理流程
+
+2. **集成测试**
+   - 更新 `test_gpu_model_runner_integration.py`
+   - 验证组件间协作
+
+#### 第四阶段：更新 Runner 测试（1-2 天）
+
+1. **保留委托测试**
+   - exist_prefill/decode
+   - clear_cache
+   - profile_run
+   - execute_model
+
+2. **移除已迁移的测试**
+   - 刄件方法直接调用测试
+   - 内部属性访问测试
+
+3. **更新 Mock 结构**
+   - 适配新的组件结构
+
+#### 第五阶段：补充真实执行测试（3-5 天）
+
+补充当前缺失的真实执行测试：
+
+1. **真实模型前向传播**
+   ```python
+   def test_execute_model_normal_with_real_model(self):
+       """使用真实模型前向传播"""
+       runner = self._create_real_runner_with_small_model()
+       requests = self._create_test_requests()
+       output = runner.execute_model(requests)
+       self._verify_output_correctness(output)
+   ```
+
+2. **Speculative decoding 真实测试**
+   ```python
+   def test_mtp_proposal_correctness(self):
+       """验证 MTP 提案的正确性"""
+       runner = self._create_runner_with_mtp()
+       output = runner.execute_model(requests)
+       self._verify_mtp_output(output)
+   ```
+
+3. **视觉特征提取完整测试**
+   ```python
+   def test_ernie_feature_extraction_with_cache(self):
+       """测试 Ernie 特征提取和缓存"""
+       runner = self._create_runner_with_vision()
+       vision_inputs = self._create_vision_inputs()
+       output = runner.execute_model(requests_with_vision)
+       self._verify_features_extracted(output)
+       self._verify_cache_hit_on_duplicate_input()
+   ```
+
+---
+
+### 五、测试质量改进建议
+
+#### 5.1 移除无效的 try-except 包装
+
+```python
+# 不推荐（当前代码）
+def test_initialize_forward_meta_basic(self):
+    try:
+        self.runner.initialize_forward_meta()
+        self.runner.forward_meta.assert_called_once()
+    except Exception:
+        pass  # 异常被吞掉，测试总是"通过"
+
+# 推荐
+def test_initialize_forward_meta_basic(self):
+    with patch.object(self.runner, 'forward_meta') as mock_meta:
+        self.runner.initialize_forward_meta()
+        self.assertTrue(mock_meta.called)
+```
+
+#### 5.2 提供完整的 Mock 设置
+
+```python
+# 组件测试基类提供统一 Mock
+class ComponentTestBase(unittest.TestCase):
+    def _create_complete_mock_runner(self):
+        """创建完整 mock 的 runner 实例"""
+        mock_fd_config = Mock()
+        mock_fd_config.model_config = self._create_mock_model_config()
+        mock_fd_config.cache_config = self._create_mock_cache_config()
+
+        runner = GPUModelRunner.__new__(GPUModelRunner)
+        runner.fd_config = mock_fd_config
+        runner.model = Mock()
+        runner.share_inputs = InputBatch(mock_fd_config)
+        runner.encoder_cache = {}
+
+        # 创建组件 Mock
+        runner.input_manager = Mock(spec=InputManager)
+        runner.vision_processor = Mock(spec=VisionProcessor)
+        runner.output_handler = Mock(spec=OutputHandler)
+        runner.cache_manager = Mock(spec=CacheManager)
+        runner.profile_runner = Mock(spec=ProfileRunner)
+        runner.inference_flow = Mock(spec=InferenceFlow)
+
+        return runner
+```
+
+#### 5.3 增强断言验证
+
+```python
+# 不推荐（当前代码）
+self.assertIn(mm_hash, self.runner.encoder_cache)
+self.assertEqual(
+    self.runner.encoder_cache[mm_hash].shape, cached_features.shape
+)  # 只验证 shape，不验证值
+
+# 推荐
+self.assertIn(mm_hash, self.runner.encoder_cache)
+cached = self.runner.encoder_cache[mm_hash]
+self.assertEqual(cached.shape, expected_shape)
+# 验证特征提取的正确性
+self.assertLess(paddle.mean(paddle.abs(cached - expected_features)), 1e-3)
+```
+
+---
+
+### 六、迁移检查清单
+
+#### 6.1 迁移前准备
+
+- [ ] 创建新的测试文件结构
+- [ ] 创建组件测试基类
+- [ ] 备份现有测试
+
+#### 6.2 组件测试迁移
+
+- [ ] InputManager 测试完成
+- [ ] VisionProcessor 测试完成
+- [ ] OutputHandler 测试完成
+- [ ] CacheManager 测试完成
+- [ ] ProfileRunner 测试完成
+
+#### 6.3 流程测试迁移
+
+- [ ] InferenceFlow 测试完成
+- [ ] 集成测试完成
+
+#### 6.4 Runner 测试更新
+
+- [ ] 委托方法测试更新
+- [ ] Mock 结构更新
+- [ ] 已迁移测试删除
+
+#### 6.5 质量验证
+
+- [ ] 所有测试通过
+- [ ] 测试覆盖率不下降
+- [ ] 性能无明显退化
+- [ ] 真实执行测试补充完成
+
+---
+
+### 七、风险与应对
+
+| 风险 | 影响 | 应对措施 |
+|------|------|----------|
+| 测试失败率高 | 迁移时间长 | 1. 分阶段迁移 2. 提供兼容层 3. 充分的 Mock 设置 |
+| Mock 复杂度增加 | 维护成本上升 | 1. 统一 Mock 基类 2. 提供测试工具函数 |
+| 组件集成测试缺失 | 组件间问题未发现 | 1. 优先完成集成测试 2. 补充真实执行测试 |
+| 性能回归测试缺失 | 性能下降未发现 | 1. 建立性能基准 2. 每次重构后运行基准测试 |
+
+---
+
+### 八、总结
+
+#### 8.1 当前测试状态
+
+| 维度 | 状态 | 说明 |
+|------|------|------|
+| 方法覆盖 | ⚠️ 100%签名, 56%逻辑 | 所有方法有签名测试，56%有逻辑验证 |
+| 场景覆盖 | ⚠️ 约40% | 基本场景有覆盖，复杂场景缺失 |
+| Corner case | ⚠️ 部分覆盖 | 边界值有部分测试，错误场景较全 |
+| 集成测试 | ❌ 不足 | e2e测试存在但全为mock |
+| 性能测试 | ❌ 缺失 | 无基准测试 |
+| 并发测试 | ❌ 缺失 | 无多线程/多进程测试 |
+
+#### 8.2 迁移预期
+
+- **预期失败率**: ~70% 的测试用例需要修改
+- **迁移工作量**: 10-15 天（按阶段进行）
+- **测试质量提升**:
+  - 组件可独立测试
+  - Mock 结构更清晰
+  - 真实执行测试补充
+  - 集成测试完善
+
+#### 8.3 优先改进项
+
+| 优先级 | 改进项 | 预期收益 |
+|--------|---------|----------|
+| P0 | 移除无效的try-except包装 | 提高测试有效性 |
+| P0 | 补充真实执行测试 | 验证实际推理流程 |
+| P0 | 完善视觉特征提取测试 | 确保多模态正确性 |
+| P1 | 添加集成测试 | 发现组件间问题 |
+| P1 | 补充分布式场景测试 | 确保TP/PP/EP正确性 |
+| P2 | 建立性能基准 | 防止性能退化 |
+| P2 | 添加并发测试 | 发现线程安全问题 |
