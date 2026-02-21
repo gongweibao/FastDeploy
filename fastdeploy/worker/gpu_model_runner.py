@@ -147,6 +147,7 @@ class GPUModelRunner(ModelRunnerBase):
         self.forward_batch_reqs_list: list[Request] = [None for _ in range(self.scheduler_config.max_num_seqs)]
         self.cache_kvs_map: dict = {}
         self.exist_prefill_flag = False
+        self.num_gpu_blocks = self.cache_config.total_block_num
 
         # VL model config:
         if self.enable_mm:
@@ -2805,6 +2806,7 @@ class GPUModelRunner(ModelRunnerBase):
         self.prompt_logprobs_reqs.clear()
         self.in_progress_prompt_logprobs.clear()
         self.forward_batch_reqs_list = [None for _ in range(self.scheduler_config.max_num_seqs)]
+        self.exist_prefill_flag = False
         if self.fd_config.routing_replay_config.enable_routing_replay:
             self.routing_replay_manager.put_table_to_store()
 

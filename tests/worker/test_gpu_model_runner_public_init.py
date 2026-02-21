@@ -105,7 +105,7 @@ class TestInitializeForwardMeta(unittest.TestCase):
             "kv_tile_ids_per_batch": paddle.zeros((10,), dtype="int32"),
             "kv_num_blocks_x_cpu": paddle.zeros((10,), dtype="int32"),
         }
-        self.runner.forward_meta = MagicMock()
+        self.runner.forward_meta = Mock()
         self.runner.lora_request_ids_to_shard_id = None
         self.runner.attn_backends = [Mock()]
         self.runner.attn_backends[0].init_attention_metadata = Mock()
@@ -119,6 +119,9 @@ class TestInitializeForwardMeta(unittest.TestCase):
         self.runner.proposer = Mock()
         self.runner.graph_opt_config = Mock()
         self.runner.graph_opt_config.graph_opt_level = 0
+
+        # Mock forward_meta attributes for tests that access them
+        self.runner.forward_meta.is_dummy_or_profile_run = False
 
     def test_initialize_forward_meta_basic(self):
         """Test initialize_forward_meta with default parameters."""
@@ -261,18 +264,14 @@ class TestInitializeKVCache(unittest.TestCase):
         self.runner.parallel_config = self.mock_parallel_config
         self.runner.routing_replay_config = self.mock_routing_replay_config
         self.runner.routing_replay_manager = None
-        self.runner.share_inputs = Mock()
+        self.runner.share_inputs = {}
         self.runner.num_gpu_blocks = 100
         self.runner.forward_meta = Mock()
-        self.runner.cache_k = None
-        self.runner.cache_v = None
-        self.runner.cache_k_cpu = None
-        self.runner.cache_v_cpu = None
-        self.runner.kv_cache_quant_type = None
         self.runner.lora_request_ids_to_shard_id = None
         self.runner.quant_config = None
         self.runner.local_rank = 0
         self.runner.device_id = 0
+        self.runner.device = Mock()
         self.runner.cache_kvs_map = {}
         self.runner.cache_ready_signal = Mock()
         self.runner.cache_ready_signal.value = [1]
@@ -280,82 +279,60 @@ class TestInitializeKVCache(unittest.TestCase):
         self.runner.attn_backends[0].get_backend_name = Mock(return_value="test_backend")
         self.runner.attn_backends[0].get_kv_cache_shape = Mock(return_value=((100, 4, 64, 128), (100, 4, 64, 128)))
         self.runner.share_inputs = {"caches": []}
-        # Add missing attributes
-        self.runner.device = Mock()
-        self.runner.device_id = 0
 
-    @patch("fastdeploy.worker.gpu_model_runner.get_attention_backend")
-    def test_initialize_kv_cache_basic(self, mock_get_backend):
+    @patch("fastdeploy.worker.gpu_model_runner.set_data_ipc")
+    def test_initialize_kv_cache_basic(self, mock_set_data_ipc):
         """Test initialize_kv_cache with basic configuration."""
-        mock_backend = Mock()
-        mock_backend.get_backend_name = Mock(return_value="test_backend")
-        mock_backend.cache_block_bytes = 2048  # Simulated block size
-        mock_backend.num_kv_heads = 4
-        mock_backend.kv_lora_rank = 0
-        mock_backend.qk_rope_head_dim = 64
-        mock_get_backend.return_value = mock_backend
-
-        # Mock shape retrieval for kv cache
-        mock_backend.get_kv_cache_shape = Mock(return_value=((100, 4, 64, 128), (100, 4, 64, 128)))
+        # Mock set_data_ipc to avoid real CUDA operations
+        mock_set_data_ipc.side_effect = lambda tensor, name: tensor
 
         self.runner.initialize_kv_cache(profile=False)
 
         # Verify cache attributes are initialized
-        self.assertIsNotNone(self.runner.cache_k)
-        self.assertIsNotNone(self.runner.cache_v)
-        # Verify backend was called to get shape
-        mock_backend.get_kv_cache_shape.assert_called_once_with(
-            max_num_blocks=100, kv_cache_quant_type=None
-        )
-        # Verify get_attention_backend was called
-        mock_get_backend.assert_called_once()
+        # The method sets self.share_inputs["caches"] and self.cache_kvs_map
+        self.assertIn("caches", self.runner.share_inputs)
+        self.assertIsNotNone(self.runner.share_inputs["caches"])
+        self.assertIsInstance(self.runner.share_inputs["caches"], list)
+        self.assertGreater(len(self.runner.share_inputs["caches"]), 0)
+        # Verify cache_kvs_map is populated
+        self.assertGreater(len(self.runner.cache_kvs_map), 0)
+        # Verify set_data_ipc was called for each layer (2 calls per layer for key and value)
+        self.assertEqual(mock_set_data_ipc.call_count, self.mock_model_config.num_hidden_layers * 2)
 
-    @patch("fastdeploy.worker.gpu_model_runner.get_attention_backend")
-    def test_initialize_kv_cache_with_cpu_blocks(self, mock_get_backend):
+    @patch("fastdeploy.worker.gpu_model_runner.set_data_ipc")
+    def test_initialize_kv_cache_with_cpu_blocks(self, mock_set_data_ipc):
         """Test initialize_kv_cache with CPU blocks configured."""
         self.mock_cache_config.cache_cpu_block_num = 50
 
-        mock_backend = Mock()
-        mock_backend.get_backend_name = Mock(return_value="test_backend")
-        mock_backend.cache_block_bytes = 2048
-        mock_backend.num_kv_heads = 4
-        mock_backend.kv_lora_rank = 0
-        mock_backend.qk_rope_head_dim = 64
-        mock_get_backend.return_value = mock_backend
-        mock_backend.get_kv_cache_shape = Mock(return_value=((100, 4, 64, 128), (100, 4, 64, 128)))
+        # Mock set_data_ipc to avoid real CUDA operations
+        mock_set_data_ipc.side_effect = lambda tensor, name: tensor
 
         self.runner.initialize_kv_cache(profile=False)
 
-        # Verify both GPU and CPU caches are initialized
-        self.assertIsNotNone(self.runner.cache_k)
-        self.assertIsNotNone(self.runner.cache_v)
-        self.assertIsNotNone(self.runner.cache_k_cpu)
-        self.assertIsNotNone(self.runner.cache_v_cpu)
+        # Verify caches are initialized
+        self.assertIn("caches", self.runner.share_inputs)
+        self.assertIsNotNone(self.runner.share_inputs["caches"])
+        self.assertIsInstance(self.runner.share_inputs["caches"], list)
 
-    @patch("fastdeploy.worker.gpu_model_runner.get_attention_backend")
-    def test_initialize_kv_cache_profile_mode(self, mock_get_backend):
+    @patch("fastdeploy.worker.gpu_model_runner.set_data_ipc")
+    def test_initialize_kv_cache_profile_mode(self, mock_set_data_ipc):
         """Test initialize_kv_cache with profile=True.
 
         In profile mode, create_cache_tensor is True regardless of other settings.
         """
-        mock_backend = Mock()
-        mock_backend.get_backend_name = Mock(return_value="test_backend")
-        mock_backend.cache_block_bytes = 2048
-        mock_backend.num_kv_heads = 4
-        mock_backend.kv_lora_rank = 0
-        mock_backend.qk_rope_head_dim = 64
-        mock_get_backend.return_value = mock_backend
-        mock_backend.get_kv_cache_shape = Mock(return_value=((100, 4, 64, 128), (100, 4, 64, 128)))
+        # Mock set_data_ipc to avoid real CUDA operations
+        mock_set_data_ipc.side_effect = lambda tensor, name: tensor
 
         # In profile mode, should always create cache
         self.runner.initialize_kv_cache(profile=True)
 
         # Verify cache is initialized in profile mode
-        self.assertIsNotNone(self.runner.cache_k)
-        self.assertIsNotNone(self.runner.cache_v)
+        self.assertIn("caches", self.runner.share_inputs)
+        self.assertIsNotNone(self.runner.share_inputs["caches"])
+        self.assertIsInstance(self.runner.share_inputs["caches"], list)
 
-    @patch("fastdeploy.worker.gpu_model_runner.get_attention_backend")
-    def test_initialize_kv_cache_with_mla(self, mock_get_backend):
+    @patch("fastdeploy.worker.gpu_model_runner.set_data_ipc")
+    def test_initialize_kv_cache_with_mla(self, mock_set_data_ipc):
         """Test initialize_kv_cache with MLA cache enabled."""
         self.mock_cache_config.use_mla_cache = True
 
@@ -364,65 +341,60 @@ class TestInitializeKVCache(unittest.TestCase):
         mock_quant_config.kv_cache_quant_type = "block_wise_fp8"
         self.runner.quant_config = mock_quant_config
 
-        mock_backend = Mock()
-        mock_backend.get_backend_name = Mock(return_value="test_backend")
-        mock_backend.cache_block_bytes = 2048
-        mock_backend.num_kv_heads = 4
-        mock_backend.kv_lora_rank = 512
-        mock_backend.qk_rope_head_dim = 64
-        mock_get_backend.return_value = mock_backend
-        mock_backend.get_kv_cache_shape = Mock(return_value=((100, 4, 64, 128), (100, 4, 64, 128)))
+        # Mock set_data_ipc to avoid real CUDA operations
+        mock_set_data_ipc.side_effect = lambda tensor, name: tensor
 
         self.runner.initialize_kv_cache(profile=False)
 
         # Verify MLA cache attributes are initialized
-        self.assertIsNotNone(self.runner.cache_k)
-        self.assertIsNotNone(self.runner.cache_v)
-        # Verify get_kv_cache_shape was called with quant_type
-        mock_backend.get_kv_cache_shape.assert_called_once_with(
-            max_num_blocks=100, kv_cache_quant_type="block_wise_fp8"
-        )
+        self.assertIn("caches", self.runner.share_inputs)
+        self.assertIsNotNone(self.runner.share_inputs["caches"])
+        # With MLA and fp8 quantization, there should be scale tensors too
+        # More tensors are created (key, value, key_scale, value_scale)
+        self.assertGreaterEqual(mock_set_data_ipc.call_count, self.mock_model_config.num_hidden_layers * 2)
 
-    @patch("fastdeploy.worker.gpu_model_runner.get_attention_backend")
-    def test_initialize_kv_cache_with_tensor_parallel(self, mock_get_backend):
+    @patch("fastdeploy.worker.gpu_model_runner.set_data_ipc")
+    def test_initialize_kv_cache_with_tensor_parallel(self, mock_set_data_ipc):
         """Test initialize_kv_cache with tensor parallel size > 1."""
         self.mock_parallel_config.tensor_parallel_size = 2
 
-        mock_backend = Mock()
-        mock_backend.get_backend_name = Mock(return_value="test_backend")
-        mock_backend.cache_block_bytes = 2048
-        mock_backend.num_kv_heads = 8  # 32 / 4 with TP=2
-        mock_backend.kv_lora_rank = 0
-        mock_backend.qk_rope_head_dim = 64
-        mock_get_backend.return_value = mock_backend
-        mock_backend.get_kv_cache_shape = Mock(return_value=((100, 8, 64, 128), (100, 8, 64, 128)))
+        # Update mock for TP=2 (num_kv_heads = 32 / 4 / 2 = 4)
+        self.runner.attn_backends[0].num_kv_heads = 4
+        self.runner.attn_backends[0].kv_lora_rank = 0
+        self.runner.attn_backends[0].qk_rope_head_dim = 64
+        self.runner.attn_backends[0].get_kv_cache_shape = Mock(
+            return_value=((100, 4, 64, 128), (100, 4, 64, 128))
+        )
+
+        # Mock set_data_ipc to avoid real CUDA operations
+        mock_set_data_ipc.side_effect = lambda tensor, name: tensor
 
         self.runner.initialize_kv_cache(profile=False)
 
         # Verify cache is initialized with TP
-        self.assertIsNotNone(self.runner.cache_k)
-        self.assertIsNotNone(self.runner.cache_v)
+        self.assertIn("caches", self.runner.share_inputs)
+        self.assertIsNotNone(self.runner.share_inputs["caches"])
+        self.assertIsInstance(self.runner.share_inputs["caches"], list)
         # Verify local_rank is used correctly (local_rank % TP_size)
-        mock_backend.get_kv_cache_shape.assert_called_once()
+        self.assertEqual(mock_set_data_ipc.call_count, self.mock_model_config.num_hidden_layers * 2)
 
-    @patch("fastdeploy.worker.gpu_model_runner.get_attention_backend")
-    def test_initialize_kv_cache_layers_count(self, mock_get_backend):
+    @patch("fastdeploy.worker.gpu_model_runner.set_data_ipc")
+    def test_initialize_kv_cache_layers_count(self, mock_set_data_ipc):
         """Test initialize_kv_cache creates cache for all layers."""
-        mock_backend = Mock()
-        mock_backend.get_backend_name = Mock(return_value="test_backend")
-        mock_backend.cache_block_bytes = 2048
-        mock_backend.num_kv_heads = 4
-        mock_backend.kv_lora_rank = 0
-        mock_backend.qk_rope_head_dim = 64
-        mock_get_backend.return_value = mock_backend
-        mock_backend.get_kv_cache_shape = Mock(return_value=((100, 4, 64, 128), (100, 4, 64, 128)))
+        # Mock set_data_ipc to avoid real CUDA operations
+        mock_set_data_ipc.side_effect = lambda tensor, name: tensor
 
         self.runner.initialize_kv_cache(profile=False)
 
-        # Verify cache_k and cache_v are initialized (lists for each layer)
+        # Verify caches are initialized (lists for each layer)
         # The implementation creates cache for num_hidden_layers
-        self.assertIsNotNone(self.runner.cache_k)
-        self.assertIsNotNone(self.runner.cache_v)
+        self.assertIn("caches", self.runner.share_inputs)
+        self.assertIsNotNone(self.runner.share_inputs["caches"])
+        self.assertIsInstance(self.runner.share_inputs["caches"], list)
+        # Each layer has a key cache and a value cache
+        self.assertEqual(len(self.runner.share_inputs["caches"]), self.mock_model_config.num_hidden_layers * 2)
+        # Verify cache_kvs_map contains entries for all layers
+        self.assertEqual(len(self.runner.cache_kvs_map), self.mock_model_config.num_hidden_layers * 2)
 
 
 if __name__ == "__main__":

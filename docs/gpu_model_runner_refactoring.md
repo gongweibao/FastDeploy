@@ -1986,9 +1986,24 @@ class InputBatch:
 
 **目标**: 将 CPU 密集型组件分离到独立进程，减少对 GPU 推理进程的干扰。
 
-**参考实现**: SGLang 已实现进程分离架构，可作为参考。
+**参考实现**: SGLang 已实现进程分离架构，但与其设计有所不同：
 
-#### 架构设计
+**SGLang 实际架构**:
+```
+主进程 (HTTP Server + TokenizerManager)
+    │
+    │ (ZMQ IPC)
+    ↓
+Scheduler 进程 (batching + GPU推理)
+    │
+    │ (ZMQ IPC)
+    ↓
+Detokenizer 进程
+```
+
+**关键差异**: SGLang 将 TokenizerManager 保持在主进程，只分离计算密集型的 Scheduler 和 Detokenizer。
+
+#### FastDeploy 可选架构设计
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -1997,7 +2012,7 @@ class InputBatch:
 │  ┌──────────────┐         ┌──────────────────┐      │
 │  │ Tokenizer   │─────────▶│  Scheduler       │      │
 │  │ Manager     │ ZMQ IPC │  (batching)     │      │
-│  │ (CPU密集)   │         │                  │      │
+│  │ (可选独立进程)│         │                  │      │
 │  └──────────────┘         └────────┬─────────┘      │
 │                                   │                 │
 │                          ┌──────────▼──────────┐      │
@@ -2008,7 +2023,6 @@ class InputBatch:
 │                          ┌──────────▼──────────┐      │
 │                          │ Detokenizer      │      │
 │                          │ Manager          │      │
-│                          │ (CPU密集)        │      │
 │                          └───────────────────┘      │
 └─────────────────────────────────────────────────────┘
 ```
@@ -2491,20 +2505,39 @@ class GPUModelRunner(LlamaModelRunnerMixin):
 
 ### 2. SGLang 的进程分离模式
 
-SGLang 将 CPU 密集型工作分离到独立进程：
+SGLang 采用不同的进程分离策略（与 vLLM 不同）：
 
 ```
-TokenizerManager (tokenization)  →  ZMQ IPC  →  Scheduler (batching/scheduling)
-         ↓                                              ↓
-Scheduler                                           ModelWorker (GPU inference)
-         ↓
-DetokenizerManager (detokenization)
+主进程 (HTTP Server + TokenizerManager)
+    │
+    │ (ZMQ IPC - tokenizer_ipc_name)
+    ↓
+Scheduler 进程 (batching/scheduling + GPU inference)
+    │
+    │ (ZMQ IPC - detokenizer_ipc_name)
+    ↓
+Detokenizer 进程 (detokenization)
 ```
+
+**关键特点：**
+- **TokenizerManager 在主进程中运行**（而非独立进程），与 HTTP Server 同进程
+- **只有 Scheduler 和 Detokenizer 作为子进程运行**（计算密集型组件）
+- 使用 ZMQ 进行进程间通信（IPC）
+- 支持 `tokenizer_worker_num > 1` 时，通过 uvicorn 多 worker 模式实现多个 tokenizer 进程
 
 **优点：**
-- 自然的功能边界
-- 各组件可独立扩缩容
-- 减少对 GPU 推理进程的干扰
+- 简化架构，减少进程间通信开销
+- 轻量级的 tokenizer 保持与 HTTP 服务紧密集成
+- 计算密集型组件（Scheduler/Detokenizer）独立进程，避免相互干扰
+
+**与 vLLM 对比：**
+
+| 组件 | vLLM | SGLang |
+|------|------|--------|
+| HTTP Server | 独立进程 | **主进程** |
+| Tokenizer | **独立进程** | **主进程** |
+| Scheduler/ModelRunner | 独立进程 | **独立进程** |
+| Detokenizer | 主进程 | **独立进程** |
 
 ### 3. 流程与组件的清晰分离
 
@@ -2606,11 +2639,11 @@ class InputBuffers:
 
 | 维度 | FastDeploy | vLLM | SGLang |
 |------|-------------|-------|--------|
-| **架构模式** | Manager + Orchestrator | 高度组件化 | 进程分离 |
-| **组件粒度** | 6 个组件 + 2 个流程 | ~10+ 组件 | 4+ 独立进程 |
+| **架构模式** | Manager + Orchestrator | 高度组件化 | 主进程(Tokenizer) + 独立子进程(Scheduler/Detokenizer) |
+| **组件粒度** | 6 个组件 + 2 个流程 | ~10+ 组件 | 3 进程 (主+Scheduler+Detokenizer) |
 | **生命周期方法** | ❌ 未统一 | ✅ add_request/remove_request/apply_staged_writes | - |
 | **性能优化** | ❌ 无 Staged Writes | ✅ Staged Writes 模式 | - |
-| **进程架构** | 单进程 | 单进程 | 多进程分离 |
+| **进程架构** | 单进程 | 单进程 | 1 主进程 + 2 子进程 |
 | **可扩展性** | ⚠️ 部分支持 | ✅ Registry 注册模式 | ⚠️ 中等 |
 | **向后兼容** | ✅ 强调兼容 | ⚠️ 逐步演进 | ⚠️ 中等 |
 
@@ -2703,11 +2736,19 @@ sampler.apply_staged_writes()  # 只启动一次 kernel
 
 **SGLang**:
 ```
-TokenizerManager → ZMQ IPC → Scheduler → ModelWorker
+主进程 (HTTP Server + TokenizerManager)
+    │ (ZMQ IPC)
+    ↓
+Scheduler 进程
+    │ (ZMQ IPC)
+    ↓
+Detokenizer 进程
 ```
 
-**优势**:
-- CPU 密集型工作不影响 GPU 推理
+**架构特点**:
+- TokenizerManager 运行在主进程（非独立进程）
+- Scheduler 和 Detokenizer 作为独立子进程运行
+- 计算密集型组件独立进程，减少相互干扰
 - 各组件可独立扩缩容
 
 **FastDeploy**: 所有组件在同一进程中，CPU 密集型操作可能影响推理性能

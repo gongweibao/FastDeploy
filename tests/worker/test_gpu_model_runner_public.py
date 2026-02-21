@@ -36,6 +36,7 @@ class TestGetInputLengthList(unittest.TestCase):
         self.mock_cache_config = Mock()
         self.mock_cache_config.block_size = 16
         self.mock_cache_config.enc_dec_block_num = 0
+        self.mock_cache_config.total_block_num = 10000
         self.mock_fd_config.cache_config = self.mock_cache_config
 
         self.runner = GPUModelRunner.__new__(GPUModelRunner)
@@ -272,6 +273,7 @@ class TestExistPrefillDecode(unittest.TestCase):
         self.runner.fd_config = self.mock_fd_config
         self.runner.scheduler_config = self.mock_scheduler_config
         self.runner.model_config = self.mock_fd_config.model_config
+        self.runner.exist_prefill_flag = False
 
     def test_exist_prefill_true(self):
         """Test exist_prefill returns True when seq_lens_encoder has positive values."""
@@ -359,6 +361,13 @@ class TestInsertTasksV1(unittest.TestCase):
         self.mock_routing_replay_config = Mock()
         self.mock_routing_replay_config.enable_routing_replay = False
         self.mock_fd_config.routing_replay_config = self.mock_routing_replay_config
+        self.mock_cache_config = Mock()
+        self.mock_cache_config.block_size = 16
+        self.mock_cache_config.enc_dec_block_num = 0
+        self.mock_cache_config.total_block_num = 10000
+        self.mock_fd_config.cache_config = self.mock_cache_config
+        self.mock_fd_config.quant_config = None
+        self.mock_fd_config.cache_config = self.mock_cache_config
 
         from fastdeploy.engine.request import RequestType
 
@@ -366,12 +375,14 @@ class TestInsertTasksV1(unittest.TestCase):
         self.runner.fd_config = self.mock_fd_config
         self.runner.model_config = self.mock_model_config
         self.runner.scheduler_config = self.mock_scheduler_config
-        self.runner.cache_config = Mock()
+        self.runner.cache_config = self.mock_cache_config
         self.runner.share_inputs = Mock()
         self.runner.forward_batch_reqs_list = [None] * 10
         self.runner.prompt_logprobs_reqs = {}
         self.runner.in_progress_prompt_logprobs = {}
         self.runner.exist_prefill_flag = False
+        self.runner.num_gpu_blocks = self.mock_cache_config.total_block_num
+        self.runner.quant_config = self.mock_fd_config.quant_config
         self.runner.pooling_params = []
         self.runner.sampler = Mock()
         self.runner.routing_replay_manager = Mock()
@@ -457,6 +468,21 @@ class TestInsertTasksV1(unittest.TestCase):
 
         # Allow setting values
         share_inputs.__setitem__ = Mock(side_effect=lambda key, value: setattr(share_inputs, f"_{key}", value))
+
+        # Support 'in' operator for keys like "caches"
+        share_inputs.__contains__ = Mock(side_effect=lambda key: key in {
+            "req_ids", "preempted_idx", "stop_flags", "seq_lens_decoder",
+            "seq_lens_encoder", "seq_lens_this_time_buffer", "seq_lens_this_time",
+            "prompt_ids", "input_ids", "encoder_block_lens", "block_tables",
+            "step_seq_lens_decoder", "prompt_lens", "is_block_step", "is_chunk_step",
+            "step_idx", "pre_ids", "eos_token_id", "top_p", "top_k",
+            "top_k_list", "min_p", "min_p_list", "temperature", "penalty_score",
+            "frequency_score", "presence_score", "temp_scaled_logprobs",
+            "top_p_normalized_logprobs", "min_dec_len", "max_dec_len",
+            "first_token_ids", "infer_seed", "bad_tokens_len", "bad_tokens",
+            "stop_seqs_len", "stop_seqs", "not_need_stop", "logits_processors_args",
+            "enable_thinking", "max_think_lens", "limit_think_status",
+        })
 
         return share_inputs
 

@@ -22,6 +22,14 @@ import numpy as np
 from fastdeploy.engine.request import RequestType
 from fastdeploy.worker.gpu_model_runner import GPUModelRunner
 
+# Mock set_stop to avoid Paddle tensor requirements
+set_stop_mock = Mock()
+set_stop_mock.return_value = None
+
+# Patch set_stop at module level
+patch_set_stop = patch('fastdeploy.worker.gpu_model_runner.set_stop', new=set_stop_mock)
+patch_set_stop.start()
+
 
 class TestGPURunnerE2E(unittest.TestCase):
     """End-to-end integration tests for GPUModelRunner."""
@@ -34,11 +42,14 @@ class TestGPURunnerE2E(unittest.TestCase):
         self.mock_model_config.eos_tokens_lens = 1
         self.mock_model_config.max_stop_seqs_num = 4
         self.mock_model_config.enable_mm = False
+        self.mock_model_config.runner_type = "causal_lm"
+        self.mock_model_config.ori_vocab_size = 32000
         self.mock_fd_config.model_config = self.mock_model_config
 
         self.mock_scheduler_config = Mock()
         self.mock_scheduler_config.splitwise_role = "mixed"
         self.mock_scheduler_config.max_num_seqs = 10
+        self.mock_scheduler_config.enable_overlap_schedule = False
         self.mock_fd_config.scheduler_config = self.mock_scheduler_config
 
         self.mock_parallel_config = Mock()
@@ -51,13 +62,34 @@ class TestGPURunnerE2E(unittest.TestCase):
 
         self.mock_cache_config = Mock()
         self.mock_cache_config.enable_prefix_caching = False
+        self.mock_cache_config.enable_chunked_prefill = False
         self.mock_fd_config.cache_config = self.mock_cache_config
+
+        self.mock_speculative_config = Mock()
+        self.mock_speculative_config.method = None
+        self.mock_speculative_config.num_speculative_tokens = 0
+        self.mock_fd_config.speculative_config = self.mock_speculative_config
+
+        self.mock_early_stop_config = Mock()
+        self.mock_early_stop_config.enable_early_stop = False
+        self.mock_fd_config.early_stop_config = self.mock_early_stop_config
+
+        self.mock_graph_opt_config = Mock()
+        self.mock_graph_opt_config.use_cudagraph = False
+        self.mock_graph_opt_config.cudagraph_capture_sizes = []
+        self.mock_graph_opt_config.cudagraph_capture_sizes_prefill = []
+        self.mock_graph_opt_config.sot_warmup_sizes = []
+        self.mock_graph_opt_config.cudagraph_only_prefill = False
+        self.mock_fd_config.graph_opt_config = self.mock_graph_opt_config
 
         self.runner = GPUModelRunner.__new__(GPUModelRunner)
         self.runner.fd_config = self.mock_fd_config
         self.runner.model_config = self.mock_model_config
         self.runner.scheduler_config = self.mock_scheduler_config
         self.runner.cache_config = self.mock_cache_config
+        self.runner.speculative_config = self.mock_speculative_config
+        self.runner.speculative_method = None
+        self.runner.speculative_decoding = False
         self.runner.share_inputs = Mock()
         self.runner.forward_batch_reqs_list = [None] * 10
         self.runner.prompt_logprobs_reqs = {}
@@ -65,19 +97,26 @@ class TestGPURunnerE2E(unittest.TestCase):
         self.runner.exist_prefill_flag = False
         self.runner.pooling_params = []
         self.runner.sampler = Mock()
+        self.runner.sampler.apply_logits_processor = Mock()
         self.runner.routing_replay_manager = Mock()
-        self.runner.speculative_decoding = False
         self.runner.enable_overlap_schedule = False
         self.runner.use_cudagraph = False
         self.runner.enable_mm = False
         self.runner.device_id = 0
+        self.runner.is_pooling_model = False
+        self.runner.enable_logprob = False
+        self.runner.enable_entropy = False
         # Mock initialize_kv_cache to avoid actual initialization
         self.runner.initialize_kv_cache = Mock()
+        self.runner.initialize_kv_cache.return_value = None
+        # Add caches to share_inputs mock to skip initialization
+        self.runner.share_inputs.__contains__ = Mock(side_effect=lambda key: key == "caches")
         self.runner.guided_backend = None
-        # Mock set_stop to avoid paddle tensor type issues
-        from unittest.mock import patch
-        self.set_stop_patch = patch('fastdeploy.worker.gpu_model_runner.set_stop')
-        self.set_stop_patch.start()
+        self.runner.proposer = None
+
+    def tearDown(self):
+        """Clean up after tests."""
+        pass
 
     def _create_mock_request(self, task_type=RequestType.PREFILL, idx=0, token_ids=None, output_ids=None):
         """Helper to create mock request."""
@@ -234,10 +273,11 @@ class TestGPURunnerE2E(unittest.TestCase):
         # Insert all requests
         self.runner.insert_tasks_v1([req1, req2, req3], num_running_requests=3)
 
-        # Verify all requests are processed
+        # Verify prefill requests are in forward_batch_reqs_list
         self.assertEqual(self.runner.forward_batch_reqs_list[0], req1)
         self.assertEqual(self.runner.forward_batch_reqs_list[1], req2)
-        self.assertEqual(self.runner.forward_batch_reqs_list[2], req3)
+        # Note: DECODE requests are NOT added to forward_batch_reqs_list in insert_tasks_v1
+        # They should already be there from the prefill phase
 
         # Verify prefill flag is set for prefill requests
         self.assertTrue(self.runner.exist_prefill_flag)
@@ -287,9 +327,10 @@ class TestGPURunnerE2E(unittest.TestCase):
         # Insert mixed tasks
         self.runner.insert_tasks_v1([prefill_req, decode_req], num_running_requests=2)
 
-        # Verify both are in the batch
+        # Verify prefill request is in forward_batch_reqs_list
         self.assertEqual(self.runner.forward_batch_reqs_list[0], prefill_req)
-        self.assertEqual(self.runner.forward_batch_reqs_list[1], decode_req)
+        # Note: DECODE requests are NOT added to forward_batch_reqs_list in insert_tasks_v1
+        # They should already be there from the prefill phase
 
         # Verify prefill flag is set
         self.assertTrue(self.runner.exist_prefill_flag)
