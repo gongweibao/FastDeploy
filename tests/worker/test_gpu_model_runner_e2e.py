@@ -15,7 +15,7 @@
 """End-to-end integration tests for GPUModelRunner."""
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, MagicMock, patch
 
 import numpy as np
 
@@ -69,6 +69,15 @@ class TestGPURunnerE2E(unittest.TestCase):
         self.runner.speculative_decoding = False
         self.runner.enable_overlap_schedule = False
         self.runner.use_cudagraph = False
+        self.runner.enable_mm = False
+        self.runner.device_id = 0
+        # Mock initialize_kv_cache to avoid actual initialization
+        self.runner.initialize_kv_cache = Mock()
+        self.runner.guided_backend = None
+        # Mock set_stop to avoid paddle tensor type issues
+        from unittest.mock import patch
+        self.set_stop_patch = patch('fastdeploy.worker.gpu_model_runner.set_stop')
+        self.set_stop_patch.start()
 
     def _create_mock_request(self, task_type=RequestType.PREFILL, idx=0, token_ids=None, output_ids=None):
         """Helper to create mock request."""
@@ -91,9 +100,23 @@ class TestGPURunnerE2E(unittest.TestCase):
         request.sampling_params.temperature = 1.0
         request.sampling_params.top_p = 1.0
         request.sampling_params.top_k = 0
+        # Explicitly set guided decoding attributes to None to avoid Mock behavior
+        request.guided_json = None
+        request.guided_regex = None
+        request.guided_grammar = None
+        request.structural_tag = None
+        request.enable_thinking = None
+        request.reasoning_max_tokens = None
+        request.pooling_params = None
+
+        # Store attributes for .get() method to retrieve
+        _request_data = {
+            "enable_thinking": request.enable_thinking,
+            "reasoning_max_tokens": request.reasoning_max_tokens,
+        }
 
         def mock_get(key, default=None):
-            return getattr(request, f"_{key}", default)
+            return _request_data.get(key, default)
 
         request.get = mock_get
 
@@ -101,56 +124,62 @@ class TestGPURunnerE2E(unittest.TestCase):
 
     def _setup_share_inputs_mock(self, num_running=2):
         """Setup share_inputs mock with required attributes."""
-        share_inputs = Mock()
-        share_inputs.get_index_by_batch_id = Mock(side_effect=lambda idx: idx)
-        share_inputs.__getitem__ = Mock(
-            side_effect=lambda key: {
-                "req_ids": [""] * 10,
-                "preempted_idx": np.zeros((10, 1), dtype="int32"),
-                "stop_flags": np.zeros((10,), dtype=bool),
-                "seq_lens_decoder": np.zeros((10,), dtype="int32"),
-                "seq_lens_encoder": np.zeros((10,), dtype="int32"),
-                "seq_lens_this_time_buffer": np.zeros((10,), dtype="int32"),
-                "seq_lens_this_time": np.zeros((10,), dtype="int32"),
-                "prompt_ids": np.zeros((10, 512), dtype="int64"),
-                "input_ids": np.zeros((10, 512), dtype="int64"),
-                "encoder_block_lens": np.zeros((10,), dtype="int32"),
-                "block_tables": np.full((10, 128), -1, dtype="int32"),
-                "step_seq_lens_decoder": np.zeros((10,), dtype="int32"),
-                "prompt_lens": np.zeros((10,), dtype="int32"),
-                "is_block_step": np.zeros((10,), dtype=bool),
-                "is_chunk_step": np.zeros((10,), dtype=bool),
-                "step_idx": np.zeros((10,), dtype="int32"),
-                "pre_ids": np.full((10, 1), -1, dtype="int64"),
-                "eos_token_id": np.zeros((1, 1), dtype="int64"),
-                "top_p": np.zeros((10,), dtype="float32"),
-                "top_k": np.zeros((10,), dtype="int32"),
-                "top_k_list": np.zeros((10,), dtype="int32"),
-                "min_p": np.zeros((10,), dtype="float32"),
-                "min_p_list": np.zeros((10,), dtype="float32"),
-                "temperature": np.zeros((10,), dtype="float32"),
-                "penalty_score": np.ones((10,), dtype="float32"),
-                "frequency_score": np.zeros((10,), dtype="float32"),
-                "presence_score": np.zeros((10,), dtype="float32"),
-                "temp_scaled_logprobs": np.zeros((10,), dtype=bool),
-                "top_p_normalized_logprobs": np.zeros((10,), dtype=bool),
-                "min_dec_len": np.zeros((10,), dtype="int32"),
-                "max_dec_len": np.zeros((10,), dtype="int32"),
-                "first_token_ids": np.zeros((10, 1), dtype="int64"),
-                "infer_seed": np.zeros((10,), dtype="int64"),
-                "bad_tokens_len": np.ones((10,), dtype="int32"),
-                "bad_tokens": np.full((10, 1), -1, dtype="int64"),
-                "stop_seqs_len": np.zeros((10, 4), dtype="int32"),
-                "stop_seqs": np.zeros((10, 4, 10), dtype="int64"),
-                "not_need_stop": np.zeros((1,), dtype="int32"),
-                "logits_processors_args": [{}] * 10,
-                "enable_thinking": np.zeros((10, 1), dtype="int32"),
-                "max_think_lens": np.full((10, 1), -1, dtype="int32"),
-                "limit_think_status": np.zeros((10, 1), dtype="int32"),
-            }[key]
-        )
+        # Use MagicMock for support of magic methods
+        share_inputs = MagicMock()
 
-        share_inputs.__setitem__ = Mock(side_effect=lambda key, value: setattr(share_inputs, f"_{key}", value))
+        # Dictionary of string keys to numpy arrays
+        data = {
+            "req_ids": [""] * 10,
+            "preempted_idx": np.zeros((10, 1), dtype="int32"),
+            "stop_flags": np.zeros((10,), dtype=bool),
+            "seq_lens_decoder": np.zeros((10,), dtype="int32"),
+            "seq_lens_encoder": np.zeros((10,), dtype="int32"),
+            "seq_lens_this_time_buffer": np.zeros((10,), dtype="int32"),
+            "seq_lens_this_time": np.zeros((10,), dtype="int32"),
+            "prompt_ids": np.zeros((10, 512), dtype="int64"),
+            "input_ids": np.zeros((10, 512), dtype="int64"),
+            "encoder_block_lens": np.zeros((10,), dtype="int32"),
+            "block_tables": np.full((10, 128), -1, dtype="int32"),
+            "step_seq_lens_decoder": np.zeros((10,), dtype="int32"),
+            "prompt_lens": np.zeros((10,), dtype="int32"),
+            "is_block_step": np.zeros((10,), dtype=bool),
+            "is_chunk_step": np.zeros((10,), dtype=bool),
+            "step_idx": np.zeros((10,), dtype="int32"),
+            "pre_ids": np.full((10, 1), -1, dtype="int64"),
+            "eos_token_id": np.zeros((1, 1), dtype="int64"),
+            "top_p": np.zeros((10,), dtype="float32"),
+            "top_k": np.zeros((10,), dtype="int32"),
+            "top_k_list": np.zeros((10,), dtype="int32"),
+            "min_p": np.zeros((10,), dtype="float32"),
+            "min_p_list": np.zeros((10,), dtype="float32"),
+            "temperature": np.zeros((10,), dtype="float32"),
+            "penalty_score": np.ones((10,), dtype="float32"),
+            "frequency_score": np.zeros((10,), dtype="float32"),
+            "presence_score": np.zeros((10,), dtype="float32"),
+            "temp_scaled_logprobs": np.zeros((10,), dtype=bool),
+            "top_p_normalized_logprobs": np.zeros((10,), dtype=bool),
+            "min_dec_len": np.zeros((10,), dtype="int32"),
+            "max_dec_len": np.zeros((10,), dtype="int32"),
+            "first_token_ids": np.zeros((10, 1), dtype="int64"),
+            "infer_seed": np.zeros((10,), dtype="int64"),
+            "bad_tokens_len": np.ones((10,), dtype="int32"),
+            "bad_tokens": np.full((10, 1), -1, dtype="int64"),
+            "stop_seqs_len": np.zeros((10, 4), dtype="int32"),
+            "stop_seqs": np.zeros((10, 4, 10), dtype="int64"),
+            # Use numpy array for not_need_stop
+            "not_need_stop": np.zeros((1,), dtype="int32"),
+            "logits_processors_args": [{}] * 10,
+            "enable_thinking": np.zeros((10, 1), dtype="int32"),
+            "max_think_lens": np.full((10, 1), -1, dtype="int32"),
+            "limit_think_status": np.zeros((10, 1), dtype="int32"),
+            "num_running_requests": 0,
+            "running_requests_ids": [],
+        }
+
+        share_inputs.get_index_by_batch_id = Mock(side_effect=lambda idx: idx)
+        share_inputs.__getitem__.side_effect = lambda key: data[key]
+        share_inputs.__setitem__.side_effect = lambda key, value: data.__setitem__(key, value)
+        share_inputs.__contains__.side_effect = lambda key: key in data
 
         return share_inputs
 
