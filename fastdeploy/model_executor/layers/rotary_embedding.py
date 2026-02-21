@@ -427,6 +427,12 @@ class ErnieVlRotaryEmbedding3D:
         )
         for i in range(bsz):
             position_ids_cur = position_ids[cumsum_seqlens[i] : cumsum_seqlens[i + 1]]
+            # position_ids_cur should be 2D to match dec_pos_ids shape for concatenation
+            if position_ids_cur.ndim == 1:
+                position_ids_cur = position_ids_cur.unsqueeze(-1)
+            # position_ids_cur should have shape [seq_len, 3] to match dec_pos_ids
+            if position_ids_cur.shape[-1] == 1:
+                position_ids_cur = paddle.tile(position_ids_cur, [1, 3])
             prefix_max_position_ids = paddle.max(position_ids_cur) + 1
             dec_pos_ids = paddle.tile(
                 paddle.arange(max_len_lst[i], dtype="int64").unsqueeze(-1),
@@ -534,6 +540,12 @@ class QwenVlRotaryEmbedding3D:
         )
         for i in range(bsz):
             position_ids_cur = position_ids[cumsum_seqlens[i] : cumsum_seqlens[i + 1]]
+            # position_ids_cur should be 2D to match dec_pos_ids shape for concatenation
+            if position_ids_cur.ndim == 1:
+                position_ids_cur = position_ids_cur.unsqueeze(-1)
+            # position_ids_cur should have shape [seq_len, 3] to match dec_pos_ids
+            if position_ids_cur.shape[-1] == 1:
+                position_ids_cur = paddle.tile(position_ids_cur, [1, 3])
             prefix_max_position_ids = paddle.max(position_ids_cur) + 1
             dec_pos_ids = paddle.tile(
                 paddle.arange(max_len_lst[i], dtype="int64").unsqueeze(-1),
