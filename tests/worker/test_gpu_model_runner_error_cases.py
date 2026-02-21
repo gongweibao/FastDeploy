@@ -63,7 +63,10 @@ class TestErrorScenarios(unittest.TestCase):
         self.runner.sampler = Mock()
         self.runner.routing_replay_manager = Mock()
         self.runner.speculative_decoding = False
+        self.runner.speculative_method = None
         self.runner.enable_overlap_schedule = False
+        self.runner.enable_mm = False
+        self.runner.guided_backend = None
 
     def _create_mock_request(self, task_type=RequestType.PREFILL, idx=0, token_ids=None):
         """Helper to create mock request."""
@@ -83,9 +86,34 @@ class TestErrorScenarios(unittest.TestCase):
         request.sampling_params.stop_seqs_len = []
         request.sampling_params.min_tokens = 1
         request.sampling_params.max_tokens = 100
+        request.sampling_params.temperature = 1.0
+        request.sampling_params.top_p = 1.0
+        request.sampling_params.top_k = 0
+        request.sampling_params.frequency_penalty = 0.0
+        request.sampling_params.presence_penalty = 0.0
+        request.sampling_params.repetition_penalty = 1.0
+        # Explicitly set guided decoding attributes to None to avoid Mock truthy behavior
+        request.guided_json = None
+        request.guided_regex = None
+        request.guided_grammar = None
+        request.structural_tag = None
+        request.disaggregate_info = None
+        # Set enable_thinking related attributes to None
+        request.enable_thinking = None
+        request.reasoning_max_tokens = None
+        # Set other attributes that may be accessed via get() - use __dict__ to store
+        request.__dict__["_top_p"] = None
+        request.__dict__["_top_k"] = None
+        request.__dict__["_temperature"] = None
+        request.__dict__["_min_p"] = None
 
         def mock_get(key, default=None):
-            return getattr(request, f"_{key}", default)
+            # Only return values for explicitly set attributes
+            prefixed_key = f"_{key}"
+            if prefixed_key in request.__dict__:
+                value = request.__dict__[prefixed_key]
+                return value if value is not None else default
+            return default
 
         request.get = mock_get
 
@@ -95,54 +123,76 @@ class TestErrorScenarios(unittest.TestCase):
         """Setup share_inputs mock with required attributes."""
         share_inputs = Mock()
         share_inputs.get_index_by_batch_id = Mock(side_effect=lambda idx: idx)
-        share_inputs.__getitem__ = Mock(
-            side_effect=lambda key: {
-                "req_ids": [""] * 10,
-                "preempted_idx": np.zeros((10, 1), dtype="int32"),
-                "stop_flags": np.zeros((10,), dtype=bool),
-                "seq_lens_decoder": np.zeros((10,), dtype="int32"),
-                "seq_lens_encoder": np.zeros((10,), dtype="int32"),
-                "seq_lens_this_time_buffer": np.zeros((10,), dtype="int32"),
-                "seq_lens_this_time": np.zeros((10,), dtype="int32"),
-                "prompt_ids": np.zeros((10, 512), dtype="int64"),
-                "input_ids": np.zeros((10, 512), dtype="int64"),
-                "encoder_block_lens": np.zeros((10,), dtype="int32"),
-                "block_tables": np.full((10, 128), -1, dtype="int32"),
-                "step_seq_lens_decoder": np.zeros((10,), dtype="int32"),
-                "prompt_lens": np.zeros((10,), dtype="int32"),
-                "is_block_step": np.zeros((10,), dtype=bool),
-                "is_chunk_step": np.zeros((10,), dtype=bool),
-                "step_idx": np.zeros((10,), dtype="int32"),
-                "pre_ids": np.full((10, 1), -1, dtype="int64"),
-                "eos_token_id": np.zeros((1, 1), dtype="int64"),
-                "top_p": np.zeros((10,), dtype="float32"),
-                "top_k": np.zeros((10,), dtype="int32"),
-                "top_k_list": np.zeros((10,), dtype="int32"),
-                "min_p": np.zeros((10,), dtype="float32"),
-                "min_p_list": np.zeros((10,), dtype="float32"),
-                "temperature": np.zeros((10,), dtype="float32"),
-                "penalty_score": np.ones((10,), dtype="float32"),
-                "frequency_score": np.zeros((10,), dtype="float32"),
-                "presence_score": np.zeros((10,), dtype="float32"),
-                "temp_scaled_logprobs": np.zeros((10,), dtype=bool),
-                "top_p_normalized_logprobs": np.zeros((10,), dtype=bool),
-                "min_dec_len": np.zeros((10,), dtype="int32"),
-                "max_dec_len": np.zeros((10,), dtype="int32"),
-                "first_token_ids": np.zeros((10, 1), dtype="int64"),
-                "infer_seed": np.zeros((10,), dtype="int64"),
-                "bad_tokens_len": np.ones((10,), dtype="int32"),
-                "bad_tokens": np.full((10, 1), -1, dtype="int64"),
-                "stop_seqs_len": np.zeros((10, 4), dtype="int32"),
-                "stop_seqs": np.zeros((10, 4, 10), dtype="int64"),
-                "not_need_stop": np.zeros((1,), dtype="int32"),
-                "logits_processors_args": [{}] * 10,
-                "enable_thinking": np.zeros((10, 1), dtype="int32"),
-                "max_think_lens": np.full((10, 1), -1, dtype="int32"),
-                "limit_think_status": np.zeros((10, 1), dtype="int32"),
-            }[key]
-        )
 
-        share_inputs.__setitem__ = Mock(side_effect=lambda key, value: setattr(share_inputs, f"_{key}", value))
+        # Define the data that should be returned by __getitem__
+        share_input_data = {
+            "req_ids": [""] * 10,
+            "preempted_idx": np.zeros((10, 1), dtype="int32"),
+            "stop_flags": np.zeros((10,), dtype=bool),
+            "seq_lens_decoder": np.zeros((10,), dtype="int32"),
+            "seq_lens_encoder": np.zeros((10,), dtype="int32"),
+            "seq_lens_this_time_buffer": np.zeros((10,), dtype="int32"),
+            "seq_lens_this_time": np.zeros((10,), dtype="int32"),
+            "prompt_ids": np.zeros((10, 512), dtype="int64"),
+            "input_ids": np.zeros((10, 512), dtype="int64"),
+            "encoder_block_lens": np.zeros((10,), dtype="int32"),
+            "block_tables": np.full((10, 128), -1, dtype="int32"),
+            "step_seq_lens_decoder": np.zeros((10,), dtype="int32"),
+            "prompt_lens": np.zeros((10,), dtype="int32"),
+            "is_block_step": np.zeros((10,), dtype=bool),
+            "is_chunk_step": np.zeros((10,), dtype=bool),
+            "step_idx": np.zeros((10,), dtype="int32"),
+            "pre_ids": np.full((10, 1), -1, dtype="int64"),
+            "eos_token_id": np.zeros((1, 1), dtype="int64"),
+            "top_p": np.zeros((10,), dtype="float32"),
+            "top_k": np.zeros((10,), dtype="int32"),
+            "top_k_list": np.zeros((10,), dtype="int32"),
+            "min_p": np.zeros((10,), dtype="float32"),
+            "min_p_list": np.zeros((10,), dtype="float32"),
+            "temperature": np.zeros((10,), dtype="float32"),
+            "penalty_score": np.ones((10,), dtype="float32"),
+            "frequency_score": np.zeros((10,), dtype="float32"),
+            "presence_score": np.zeros((10,), dtype="float32"),
+            "temp_scaled_logprobs": np.zeros((10,), dtype=bool),
+            "top_p_normalized_logprobs": np.zeros((10,), dtype=bool),
+            "min_dec_len": np.zeros((10,), dtype="int32"),
+            "max_dec_len": np.zeros((10,), dtype="int32"),
+            "first_token_ids": np.zeros((10, 1), dtype="int64"),
+            "infer_seed": np.zeros((10,), dtype="int64"),
+            "bad_tokens_len": np.ones((10,), dtype="int32"),
+            "bad_tokens": np.full((10, 1), -1, dtype="int64"),
+            "stop_seqs_len": np.zeros((10, 4), dtype="int32"),
+            "stop_seqs": np.zeros((10, 4, 10), dtype="int64"),
+            "not_need_stop": paddle.full([1], False, dtype="bool").cpu(),
+            "logits_processors_args": [{}] * 10,
+            "enable_thinking": np.zeros((10, 1), dtype="int32"),
+            "max_think_lens": np.full((10, 1), -1, dtype="int32"),
+            "limit_think_status": np.zeros((10, 1), dtype="int32"),
+        }
+
+        # Store the data on the mock object for __getitem__
+        for key, value in share_input_data.items():
+            setattr(share_inputs, key, value)
+
+        # Define __getitem__ to access attributes
+        def mock_getitem(key):
+            if hasattr(share_inputs, key):
+                return getattr(share_inputs, key)
+            raise KeyError(f"Key '{key}' not found")
+
+        share_inputs.__getitem__ = Mock(side_effect=mock_getitem)
+
+        # Define __setitem__ to set attributes
+        def mock_setitem(key, value):
+            setattr(share_inputs, key, value)
+
+        share_inputs.__setitem__ = Mock(side_effect=mock_setitem)
+
+        # Define __contains__ to check if attribute exists
+        def mock_contains(key):
+            return hasattr(share_inputs, key)
+
+        share_inputs.__contains__ = Mock(side_effect=mock_contains)
 
         return share_inputs
 
@@ -331,7 +381,7 @@ class TestErrorScenarios(unittest.TestCase):
         req1 = self._create_mock_request(task_type=RequestType.PREFILL, idx=0)
         req1.sampling_params.top_p = 2.0
 
-        self.runner.share_inputs.get_index_by_batch_id = Mock(return_value=0)
+        self.runner.share_inputs.get_index_by_batch_id = Mock(side_effect=lambda idx: idx)
 
         # Insert request
         self.runner.insert_tasks_v1([req1], num_running_requests=1)

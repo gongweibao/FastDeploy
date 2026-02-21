@@ -1161,7 +1161,12 @@ class GPUModelRunner(ModelRunnerBase):
                     This list is crafted to maximize the total number of blocks.
         """
         # NOTE(gongshaotian): The maximum decoding length is equal to the expected decoded tokens plus the eos token
-        max_dec_len = expected_decode_len + 1
+        # Ensure max_dec_len is at least 1 (minimum valid length)
+        max_dec_len = max(expected_decode_len + 1, 1)
+        # Handle edge cases
+        if batch_size == 0:
+            return [], [], 0
+
         input_length = min(
             num_tokens // (1 if capture_prefill else batch_size),
             self.model_config.max_model_len - max_dec_len,
