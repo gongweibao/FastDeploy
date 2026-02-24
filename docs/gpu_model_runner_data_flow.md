@@ -2,6 +2,10 @@
 
 本文档描述了 FastDeploy 中 `GPUModelRunner` 组件的数据流转流程。
 
+> **相关文档**：[gpu_model_runner_mm_data_flow.md](gpu_model_runner_mm_data_flow.md)（多模态数据处理流程）、[gpu_model_runner_refactoring.md](gpu_model_runner_refactoring.md)（重构方案）
+>
+> **术语约定**：本系列文档中，"提取"指视觉编码器对原始图像进行特征提取（在 insert_tasks 阶段完成）；"拼接"指将已缓存的 image_features_list 合并为 image_features（在 prepare_inputs 阶段完成）。
+
 ---
 
 ## 1. 完整数据流转流程图
@@ -23,12 +27,16 @@ flowchart TD
 
     subgraph InsertTasks["阶段3: 插入任务"]
         J["GpuWorker.execute_model()"] --> K{调度器版本?}
-        K -->|V1| L["insert_tasks_v1()"]
-        K -->|V2| M["insert_prefill_inputs()"]
+        K -->|V1| L["insert_tasks_v1()<br/>支持 Prefill+Decode 任务"]
+        K -->|V0| M["insert_prefill_inputs()<br/>主要处理 Prefill 任务<br/>支持 disaggregated 场景"]
         L --> N["写入 share_inputs<br/>- input_ids<br/>- prompt_ids<br/>- seq_lens<br/>- block_tables<br/>- 采样参数<br/>- stop_flags"]
         M --> N
-        N --> O{多模态任务?}
-        O -->|是| P["_process_mm_features()<br/>- extract_vision_features()<br/>- 写入 encoder_cache<br/>- 写入 image_features_list"]
+        N --> N1{chunked prefill?}
+        N1 -->|是| N2["分块处理<br/>prefill_start/end_index<br/>is_chunk_step = True"]
+        N2 -->|还有剩余 chunk| N2
+        N2 -->|所有 chunk 完成| O
+        N1 -->|否| O{多模态任务?}
+        O -->|是| P["_process_mm_features()<br/>- extract_vision_features()<br/>- 写入 encoder_cache<br/>- 写入 image_features_list<br/>(V0 和 V1 均会调用)"]
         O -->|否| Q["继续"]
         P --> R["prepare_rope3d()"]
         R --> Q
@@ -39,7 +47,7 @@ flowchart TD
         T --> U["_prepare_inputs()<br/>pre_process()"]
         U --> V["生成 ids_remove_padding<br/>batch_id_per_token<br/>cu_seqlens_q/k"]
         V --> W["initialize_forward_meta()<br/>创建 ForwardMeta"]
-        W --> X["拼接 image_features<br/>(多模态模式)"]
+        W --> X["拼接已缓存的 image_features<br/>(多模态模式，仅拼接，不重新提取)"]
         X --> Y["sampler.pre_process()"]
     end
 
@@ -125,7 +133,8 @@ flowchart TB
     Request -->|插入| ShareInputs
     ShareInputs -->|预处理| ForwardMeta
     ForwardMeta -->|传入| Model
-    Model -->|返回| SamplerImpl
+    Model -->|"返回 hidden_states"| ComputeLogits["compute_logits()<br/>计算logits"]
+    ComputeLogits -->|"传入 logits"| SamplerImpl
     SamplerImpl -->|返回| SamplerOutput
     SamplerOutput -->|组合| ModelOutputData
     ModelOutputData -->|返回| Engine
@@ -226,7 +235,7 @@ flowchart LR
 | `__init__()` | 初始化共享输入缓冲区、采样器、注意力后端 |
 | `load_model()` | 加载模型实例、初始化KV Cache |
 | `insert_tasks_v1()` | V1调度器：插入任务到共享输入 |
-| `insert_prefill_inputs()` | V2调度器：插入prefill输入 |
+| `insert_prefill_inputs()` | V0调度器：插入prefill输入，支持disaggregated场景 |
 | `_process_mm_features()` | 处理多模态特征 |
 | `execute_model()` | 执行模型主入口 |
 | `_preprocess_and_execute_model()` | 预处理并执行模型 |
@@ -333,9 +342,10 @@ flowchart TD
     S5 -->|恢复请求| S1
     S6 --> S0
 
-    S1 -->|多模态输入| S7
-    S7 -->|特征缓存| S8
-    S8 --> S1
+    S1 -->|多模态输入<br/>缓存未命中| S7
+    S1 -->|多模态输入<br/>缓存命中| S8
+    S7 -->|"特征提取完成<br/>继续当前 PREFILL 流程"| S3
+    S8 -->|"直接使用缓存特征<br/>继续当前 PREFILL 流程"| S3
 
     style InitState fill:#e1f5ff
     style PrefillState fill:#fff4e1
@@ -349,13 +359,13 @@ flowchart TD
 
 | 状态字段 | 初始值 | PREFILL | DECODE | PREEMPTED | FINISHED |
 |---------|--------|---------|--------|-----------|----------|
-| `seq_lens_encoder` | 0 | prompt_len | 0 | 0 | 0 |
-| `seq_lens_decoder` | 0 | 0 | 自增 | 0 | final_len |
-| `seq_lens_this_time` | 0 | prompt_len | 1 | 0 | 0 |
+| `seq_lens_encoder` | 0 | prompt_len (或 chunk_len) | 0 | 0 | 0 |
+| `seq_lens_decoder` | 0 | prefill_start_index | 每步+1 (在 insert_tasks_v1 中自增) | 0 | final_len |
+| `seq_lens_this_time` | 0 | prompt_len (或 chunk_len) | 1 | 0 | 0 |
 | `stop_flags` | True | False | False | True | True |
 | `block_tables` | -1 | [分配的块] | [分配的块] | -1 | -1 |
 | `is_block_step` | False | False | False | False | False |
-| `is_chunk_step` | False | chunked? | False | False | False |
+| `is_chunk_step` | False | True (如果 chunked) | False | False | False |
 
 ### 7.3 KV Cache 块管理状态
 

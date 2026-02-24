@@ -1,5 +1,9 @@
 # GPUModelRunner 重构方案
 
+> **相关文档**：[gpu_model_runner_data_flow.md](gpu_model_runner_data_flow.md)（完整数据流转）、[gpu_model_runner_mm_data_flow.md](gpu_model_runner_mm_data_flow.md)（多模态数据处理流程）
+>
+> **术语约定**：本系列文档中，"提取"指视觉编码器对原始图像进行特征提取（在 insert_tasks 阶段完成）；"拼接"指将已缓存的 image_features_list 合并为 image_features（在 prepare_inputs 阶段完成）。
+
 ## 问题概述
 
 `gpu_model_runner.py` 模块当前过于庞大，存在以下问题：
@@ -159,8 +163,8 @@ class InputManager(BaseComponent):
             self._pending_mm_requests.clear()
 
     def get_vision_processor(self) -> 'VisionProcessor':
-        """获取 VisionProcessor（总是返回有效的处理器）"""
-        return self._vision_processor or NullVisionProcessor()
+        """获取 VisionProcessor（可能为 None，调用方需检查）"""
+        return self._vision_processor
 
     def _process_pending_mm_requests(self):
         """处理暂存的多模态请求"""
@@ -246,8 +250,6 @@ class InputManager(BaseComponent):
         - 需要访问 share_inputs 中的输入信息
         """
         pass
-
-    def get_input_length_list(self) -> List[int]:
 
 **迁移的方法：**
 - `insert_tasks_v1`
@@ -460,27 +462,33 @@ class NullVisionProcessor(BaseComponent):
     空对象模式的 VisionProcessor 实现
 
 ```
-用于 VisionProcessor 未初始化时的默认处理器，确保代码路径一致
-所有方法都返回空实现或无操作
+用于 enable_mm=False 时的默认处理器，确保代码路径一致。
+所有方法都返回空实现或无操作。
+
+重要：NullVisionProcessor 仅用于不需要多模态处理的场景（enable_mm=False）。
+当 enable_mm=True 但 VisionProcessor 尚未初始化（load_model 之前）时，
+不应使用 NullVisionProcessor，而应由 InputManager 将多模态请求暂存到
+_pending_mm_requests 列表中，等 VisionProcessor 初始化后统一处理。
 """
+
 def process_request_features(self, req_idx: int, request: Request) -> None:
-    """空实现：暂存请求特征处理"""
+    """无操作：非多模态场景不需要处理视觉特征"""
     pass
 
 def process_mm_features(self, request_list: List[Request]) -> None:
-    """空实现"""
+    """无操作：非多模态场景不需要处理视觉特征"""
     pass
 
 def add_request(self, req_idx: int, request: Request) -> None:
-    """空实现"""
+    """无操作"""
     pass
 
 def remove_request(self, req_idx: int) -> None:
-    """空实现"""
+    """无操作"""
     pass
 
 def reset_cache(self) -> None:
-    """空实现"""
+    """无操作"""
     pass
 ```
 
@@ -1041,7 +1049,7 @@ class ProfileRunner:
 
 class InferenceFlow:
     """
-    推理流程的编排层（纯流程编排器）
+    推理流程的编排层（轻量级编排器）
 
     职责：
     - 编排推理的完整流程
@@ -1049,39 +1057,40 @@ class InferenceFlow:
     - 处理不同的执行模式
 
     设计原则：
-    - 无状态编排器：不持有任何组件实例
-    - 所有依赖通过参数传入
-    - 每次调用完全独立，无副作用
+    - 轻量级编排器：持有组件引用（只读），不持有自身业务状态
+    - 每次 execute() 调用完全独立，无副作用
+    - 组件的生命周期由 GPUModelRunner 管理，InferenceFlow 只使用
+
+    为什么持有组件引用而非完全无状态：
+    - execute() 内部需要访问 share_inputs、forward_meta、enable_mm 等大量上下文
+    - 如果全部通过参数传递，方法签名会膨胀到不可维护的程度
+    - 持有引用是合理的折衷：InferenceFlow 不管理组件生命周期，只读取和调用
 
     注意：
     - 视觉特征提取在任务插入阶段（insert_tasks）完成，不在推理流程中重复提取
     - prepare_inputs 只负责整理输入数据，包括拼接已缓存的 vision_features
-    - model 通过参数传入，避免持有状态
     """
 
-    def __init__(self):
-        """无状态编排器，不需要初始化任何状态"""
-        pass
+    def __init__(self, input_mgr: 'InputManager', output_hdlr: 'OutputHandler'):
+        """初始化编排器，持有组件引用（只读）"""
+        self._input_mgr = input_mgr
+        self._output_hdlr = output_hdlr
 
     def execute(self, model_forward_batch: List[Request],
                model: nn.Layer,
-               input_mgr: InputManager,
-               output_hdlr: OutputHandler,
                **kwargs) -> ModelRunnerOutput:
         """
         主执行入口
 
         Args:
             model_forward_batch: 请求批次
-            model: 模型实例（参数传入，不持有）
-            input_mgr: 输入管理器
-            output_hdlr: 输出处理器
+            model: 模型实例（由 GPUModelRunner 传入，InferenceFlow 不持有）
             **kwargs: 其他参数
 
         工作流程：
         1. 检查是否为空输入
         2. 处理重排序（如果需要）
-        3. 准备输入（包括处理视觉特征和拼接）
+        3. 准备输入（包括处理视觉特征拼接）
         4. 执行模型推理
         5. 后处理
 
@@ -1095,27 +1104,23 @@ class InferenceFlow:
             return self._execute_empty_input(kwargs.get('forward_meta'))
 
         # 2. 处理重排序（如果需要）
-        input_mgr.process_reorder()
+        self._input_mgr.process_reorder()
 
         # 3. 准备输入
-        #    - 移除 padding
-        #    - 初始化 forward meta
-        #    - 获取 sampling metadata
-        #    - 拼接视觉特征（如果存在）
-        input_mgr.prepare_inputs(last_token_num=kwargs.get('last_token_num', -1),
+        self._input_mgr.prepare_inputs(last_token_num=kwargs.get('last_token_num', -1),
                                 is_dummy_or_profile_run=kwargs.get('is_dummy_or_profile_run', False))
 
         # 4. 执行模型推理
         outputs = self._preprocess_and_execute_model(
             model,
             model_forward_batch,
-            input_mgr.share_inputs,
+            self._input_mgr.share_inputs,
             kwargs.get('forward_meta')
         )
 
         # 5. 后处理
-        output_hdlr.postprocess(outputs.sampler_output, outputs.model_output,
-                                input_mgr.share_inputs, **kwargs)
+        self._output_hdlr.postprocess(outputs.sampler_output, outputs.model_output,
+                                self._input_mgr.share_inputs, **kwargs)
 
         return outputs
 
@@ -1139,10 +1144,6 @@ class InferenceFlow:
     def _preprocess_and_execute_model(self, ...):
         """预处理并执行模型"""
         pass
-
-    def _execute_empty_input(self, forward_meta):
-        """执行空输入处理"""
-        pass
 ```
 
 **迁移的方法：**
@@ -1157,13 +1158,13 @@ class InferenceFlow:
 | 维度 | GPUModelRunner | InferenceFlow |
 |------|---------------|---------------|
 | **拥有模型** | ✅ 持有 model 实例 | ❌ model 作为参数传入 |
-| **组件生命周期** | ✅ 创建和管理所有组件 | ❌ 不管理组件 |
+| **组件生命周期** | ✅ 创建和管理所有组件 | ❌ 持有组件引用，不管理生命周期 |
 | **配置管理** | ✅ 持有 FDConfig | ❌ 依赖传入的配置 |
 | **初始化** | ✅ KV Cache、Attn Backend 等 | ❌ 不负责初始化 |
 | **外部接口** | ✅ 提供给外部调用 | ❌ 内部使用 |
 | **状态查询** | ✅ exist_prefill/decode 等 | ❌ 无状态 |
 | **Profile/Warmup** | ✅ 负责 | ❌ 不负责 |
-| **推理编排** | ⏸️ 委托给 InferenceFlow | ✅ 负责（纯流程）|
+| **推理编排** | ⏸️ 委托给 InferenceFlow | ✅ 负责（轻量级流程编排）|
 
 **架构模式：Manager + Orchestrator**
 
@@ -1212,9 +1213,9 @@ class InferenceFlow:
 - 提供稳定的对外接口
 - 管理资源生命周期
 
-**InferenceFlow（无状态的编排器）：**
-- 不持有任何状态，所有依赖通过参数传入
-- 纯流程编排，每次调用完全独立
+**InferenceFlow（轻量级编排器）：**
+- 持有组件引用（只读），不管理组件生命周期
+- 纯流程编排，每次 execute() 调用完全独立
 - 不管理资源，只协调组件调用顺序
 - model 通过 execute() 方法参数传入，不在 __init__ 中持有
 
@@ -1232,7 +1233,8 @@ class InferenceFlow:
 ### 7. GPUModelRunner - 精简后的协调器
 
 ```python
-# gpu_model_runner.py (重构后 ~300 行)
+# gpu_model_runner.py (重构后 ~500-800 行)
+# 说明：包含委托方法、初始化逻辑、辅助方法等，300 行的估计过于乐观
 
 class GPUModelRunner(ModelRunnerBase):
     """
@@ -1284,7 +1286,10 @@ class GPUModelRunner(ModelRunnerBase):
         )
         self.cache_manager = CacheManager(self.fd_config, model)
         self.profile_runner = ProfileRunner(self.fd_config, model)
-        self.inference_flow = InferenceFlow()  # 无状态，不需要 model
+        self.inference_flow = InferenceFlow(
+            input_mgr=self.input_manager,
+            output_hdlr=self.output_handler
+        )  # 轻量级编排器，持有组件引用
 
         # 设置 InputManager 的 VisionProcessor 引用
         self.input_manager.set_vision_processor(self.vision_processor)
@@ -1295,9 +1300,7 @@ class GPUModelRunner(ModelRunnerBase):
         """执行模型推理（委托给 InferenceFlow）"""
         return self.inference_flow.execute(
             model_forward_batch,
-            model=self.model,  # model 作为参数传入
-            input_mgr=self.input_manager,
-            output_hdlr=self.output_handler,
+            model=self.model,  # model 作为参数传入，InferenceFlow 不持有
             **kwargs
         )
 
@@ -1448,82 +1451,11 @@ class GPUModelRunner(ModelRunnerBase):
 
 **参考实现**: FastDeploy 代码库中暂无此模式，需要引入。vLLM 已实现类似模式。
 
+**前提建议**: 在引入此模式前，建议先对当前代码进行性能 profiling，量化 kernel 启动开销占比，确认优化收益后再实施。
+
 #### 设计方案
 
-```python
-# components/staged_write_mixin.py
-
-class StagedWriteMixin:
-    """
-    Staged Writes 混入类
-
-    用于需要批量更新状态的组件，减少 GPU kernel 启动次数
-
-    设计原则：
-    - stage_write(): 收集所有待写入的变更，暂存不执行
-    - apply_staged_writes(): 一次性提交所有变更，只启动一次 kernel
-    - 对于同一类型的数据（如所有 token 更新），应该合并为一次写入操作
-
-    注意：
-    - 不同 key 的写入仍然需要分别调用 _batch_write
-    - 但同一 key 的多次写入会合并为一次调用
-    - 真正减少 kernel 启动需要确保 _batch_write 内部只启动一次 kernel
-    """
-
-    def __init__(self):
-        # 存储待写入的变更
-        self._staged_writes: Dict[str, List[Tuple]] = {}
-
-    def stage_write(self, key: str, value: Any, priority: int = 0):
-        """
-        暂存写入操作
-
-        Args:
-            key: 写入目标（如 "token", "logprob"）
-            value: 要写入的值
-            priority: 写入优先级（用于控制写入顺序）
-        """
-        if key not in self._staged_writes:
-            self._staged_writes[key] = []
-        self._staged_writes[key].append((value, priority))
-
-    def apply_staged_writes(self):
-        """
-        批量执行所有暂存的写入操作
-
-        将多次写入合并为一次操作，减少 kernel 启动
-
-        注意：对于不同的 key，会分别调用 _batch_write。
-        要真正减少 kernel 启动次数，需要在 _batch_write 实现中确保
-        所有相同类型的更新合并为一次 kernel 调用。
-        """
-        for key, writes in self._staged_writes.items():
-            # 按优先级排序
-            writes.sort(key=lambda x: x[1])
-            values = [v for v, _ in writes]
-            self._batch_write(key, values)
-        self._staged_writes.clear()
-
-    def _batch_write(self, key: str, values: List[Any]):
-        """
-        实际的批量写入操作（由子类实现）
-
-        关键要求：此方法内部必须确保只启动一次 kernel
-
-        Args:
-            key: 写入目标
-            values: 要写入的值列表
-
-        示例实现：
-            def _batch_write(self, key: str, values: List[Any]):
-                if key == "token":
-                    # 将所有 token 更新收集后，一次 kernel 写入
-                    req_indices = [idx for idx, _ in values]
-                    tokens = [token for _, token in values]
-                    paddle.scatter_assign(self.token_buffer, req_indices, tokens)
-        """
-        raise NotImplementedError
-```
+> **注意**：`StagedWriteMixin` 的完整定义（含 `immediate` 写入模式）请参见上文"CacheManager"章节。此处不再重复，仅展示应用示例。
 
 #### 应用到 CacheManager
 
@@ -1657,27 +1589,6 @@ class BaseComponent:
         """重置组件缓存（如适用）"""
         pass
 
-    # ========== 执行方法 ==========
-
-    def __call__(self, **kwargs) -> Any:
-        """
-        执行组件功能（可选，用于纯函数式组件）
-
-        默认实现：返回 None，子类可覆盖实现具体逻辑
-
-        Args:
-            **kwargs: 执行参数
-
-        Returns:
-            组件执行结果（默认 None）
-
-        注意：
-            - 此方法默认不抛出异常，允许子类选择性实现
-            - 大多数有状态的组件不需要实现此方法
-            - 主要用于纯函数式组件，如某些处理器或转换器
-        """
-        return None
-
     # ========== 状态查询方法（可选）==========
 
     def get_status(self) -> Dict[str, Any]:
@@ -1728,6 +1639,13 @@ class InputManager(BaseComponent):
 class CacheManager(BaseComponent):
     """
     Cache 管理组件，遵循统一的生命周期方法
+
+    职责边界说明：
+    - CacheManager 负责 KV Cache 的初始化、block 分配/释放和容量管理
+    - 当前代码中 block_tables 的写入在 insert_tasks_v1() 中通过 share_inputs 直接完成
+    - 重构后：block_tables 的写入应统一由 CacheManager.add_request() 负责
+    - InputManager.insert_tasks_v1() 调用 CacheManager.add_request() 来分配 block
+    - 这样 CacheManager 成为 block_tables 的唯一写入者，符合单一写入者原则
     """
 
     def add_request(self, req_idx: int, request: Request) -> None:
@@ -2006,25 +1924,25 @@ Detokenizer 进程
 #### FastDeploy 可选架构设计
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Engine Service                    │
-│                                                      │
-│  ┌──────────────┐         ┌──────────────────┐      │
-│  │ Tokenizer   │─────────▶│  Scheduler       │      │
-│  │ Manager     │ ZMQ IPC │  (batching)     │      │
-│  │ (可选独立进程)│         │                  │      │
-│  └──────────────┘         └────────┬─────────┘      │
-│                                   │                 │
-│                          ┌──────────▼──────────┐      │
-│                          │  ModelWorker      │      │
-│                          │  (GPU推理)       │      │
-│                          └───────────────────┘      │
-│                                   │                 │
-│                          ┌──────────▼──────────┐      │
-│                          │ Detokenizer      │      │
-│                          │ Manager          │      │
-│                          └───────────────────┘      │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                     Engine Service                        │
+│                                                           │
+│  ┌────────────────┐           ┌──────────────────┐       │
+│  │  Tokenizer     │──────────▶│  Scheduler       │       │
+│  │  Manager       │  ZMQ IPC  │  (batching)      │       │
+│  │  (可选独立进程) │           │                  │       │
+│  └────────────────┘           └────────┬─────────┘       │
+│                                        │                  │
+│                               ┌────────▼─────────┐       │
+│                               │  ModelWorker     │       │
+│                               │  (GPU推理)       │       │
+│                               └────────┬─────────┘       │
+│                                        │                  │
+│                               ┌────────▼─────────┐       │
+│                               │  Detokenizer     │       │
+│                               │  Manager         │       │
+│                               └──────────────────┘       │
+└──────────────────────────────────────────────────────────┘
 ```
 
 #### 阶段规划
@@ -2125,7 +2043,7 @@ class GPUModelRunner(ModelRunnerBase):
     # ... 还有 40+ 个方法
 ```
 
-### 重构后：~300 行 Runner + 各组件
+### 重构后：~500-800 行 Runner + 各组件
 
 ```python
 # gpu_model_runner.py
@@ -2140,20 +2058,21 @@ class GPUModelRunner(ModelRunnerBase):
         # 纯协调，委托给 InferenceFlow
         return self.inference_flow.execute(
             model_forward_batch,
-            input_mgr=self.input_manager,
-            vision_proc=self.vision_processor,
-            output_hdlr=self.output_handler,
+            model=self.model,
             ...
         )
 
 # flows/inference_flow.py
 class InferenceFlow:
-    def execute(self, batch, input_mgr, vision_proc, output_hdlr, ...):
-        # 纯流程编排，不包含具体实现
-        input_mgr.prepare_inputs(batch)
-        vision_proc.process_features(batch)
-        outputs = self._run_model(batch)
-        output_hdlr.postprocess(outputs)
+    def __init__(self, input_mgr, output_hdlr):
+        self._input_mgr = input_mgr
+        self._output_hdlr = output_hdlr
+
+    def execute(self, batch, model, ...):
+        # 流程编排，持有组件引用（只读）
+        self._input_mgr.prepare_inputs(batch)
+        outputs = self._run_model(model, batch)
+        self._output_hdlr.postprocess(outputs)
         return outputs
 
 # components/vision_processor.py
@@ -2268,13 +2187,19 @@ class VisionProcessor:
 
 `share_inputs`（InputBatch）是多个组件共用的共享数据结构，采用以下访问控制模式：
 
+**所有权说明**：
+- `share_inputs` 由 GPUModelRunner 创建，是全局唯一实例
+- InputManager 持有 `share_inputs` 的引用，作为主要读写者
+- 其他组件通过显式传参获取 `share_inputs` 引用，而非自行持有
+- 长期建议：考虑让 InputManager 成为 `share_inputs` 的唯一 owner，其他组件通过 InputManager 的方法获取只读视图，减少隐式耦合
+
 | 字段 | 写入者 | 读取者 | 说明 |
 |------|--------|--------|------|
 | `input_ids` | InputManager.prepare_inputs() | Model | 模型输入 ID |
 | `image_features_list` | VisionProcessor.process_mm_features() | InputManager.prepare_inputs() | 视觉特征缓存（任务插入时写入） |
 | `image_features` | InputManager.prepare_inputs() | Model | 拼接后的视觉特征 |
 | `seq_lens_*` | InputManager.prepare_inputs() | OutputHandler | 序列长度信息 |
-| `block_tables` | CacheManager | Model | KV Cache 块表 |
+| `block_tables` | CacheManager.add_request() | Model | KV Cache 块表 |
 | `top_p`, `top_k` | InputManager.insert_tasks() | Sampler | 采样参数 |
 
 **访问原则**：
@@ -2422,7 +2347,7 @@ GPUModelRunner.load_model()
     ├─> VisionProcessor(model, encoder_cache, share_inputs)  ← 依赖两者
     ├─> CacheManager(model)                                  ← 依赖 model
     ├─> ProfileRunner(model)                                 ← 依赖 model
-    ├─> InferenceFlow(model)                                 ← 依赖 model
+    ├─> InferenceFlow(input_manager, output_handler)         ← 依赖已创建的组件
     │
     └─> input_manager.set_vision_processor(vision_processor)  ← 设置引用
 ```
@@ -2435,7 +2360,7 @@ GPUModelRunner.load_model()
 5. **VisionProcessor**: 依赖 model、encoder_cache、share_inputs
 6. **CacheManager**: 依赖 model
 7. **ProfileRunner**: 依赖 model
-8. **InferenceFlow**: 依赖 model
+8. **InferenceFlow**: 依赖 InputManager、OutputHandler（持有引用）
 
 ### 6. 错误处理机制
 

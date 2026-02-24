@@ -1,8 +1,12 @@
-# GPUModelRunner 文本和 MM 数据处理流程
+# GPUModelRunner 多模态数据处理流程
 
 ## 概述
 
-GPUModelRunner 是 FastDeploy 中负责模型执行的核心类，支持纯文本和多模态 (MM) 数据的处理和推理。
+GPUModelRunner 是 FastDeploy 中负责模型执行的核心类，支持纯文本和多模态 (MM) 数据的处理和推理。本文档聚焦于多模态数据的处理流程，包括图像预处理、视觉特征提取、编码器缓存和模型前向传播中的多模态路径。纯文本数据处理流程请参见 `gpu_model_runner_data_flow.md`。
+
+> **相关文档**：[gpu_model_runner_data_flow.md](gpu_model_runner_data_flow.md)（完整数据流转）、[gpu_model_runner_refactoring.md](gpu_model_runner_refactoring.md)（重构方案）
+>
+> **术语约定**：本系列文档中，"提取"指视觉编码器对原始图像进行特征提取（在 insert_tasks 阶段完成）；"拼接"指将已缓存的 image_features_list 合并为 image_features（在 prepare_inputs 阶段完成）。
 
 ---
 
@@ -60,7 +64,9 @@ GPUModelRunner 是 FastDeploy 中负责模型执行的核心类，支持纯文�
 │                                      ▼                                                                           │
 │  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐   │
 │  │ 3. 多模态特征处理 (_process_mm_features)                                                                    │   │
-│  │   【仅在 V0 调度且存在图像时执行】                                                                           │   │
+│  │   【V0 和 V1 调度均会调用，在存在图像的 PREFILL 任务时执行】                                                │   │
+│  │   【V0 调度：在 insert_prefill_inputs 中调用】                                                              │   │
+│  │   【V1 调度：在 insert_tasks_v1 末尾调用（L896）】                                                          │   │
 │  │                                                                                                              │   │
 │  │   ├── 遍历 request_list (仅 PREFILL 任务)                                                                   │   │
 │  │   │   ├── 构建 multi_vision_inputs 字典:                                                                    │   │
@@ -196,6 +202,21 @@ self.share_inputs["block_tables"][idx : idx + 1, :encoder_block_num] = np.array(
 ```
 
 #### 多模态数据处理
+
+##### `_preprocess_mm_task()` 输入输出说明
+
+**输入**: `request.multimodal_inputs`，一个字典，其结构取决于模型类型：
+
+| 字段 | 类型 | 说明 | 来源 |
+|------|------|------|------|
+| `images` | List[bytes] 或 List[np.ndarray] | 原始图像数据 | 用户请求 |
+| `grid_thw` | List[List[int]] | 网格尺寸 [grid_t, grid_h, grid_w] | 图像预处理计算 |
+| `position_ids` | List[int] | token 级别的位置 ID | tokenizer 生成 |
+| `image_type_ids` | List[int] | 图像/文本类型标识 | tokenizer 生成 |
+| `mm_hashes` | List[str] | 多模态内容的哈希值，用于缓存匹配 | 内容哈希计算 |
+
+**输出**: 转换后的 paddle.Tensor 字典，供 `extract_vision_features()` 使用。
+
 对于多模态请求，额外处理图像和位置信息：
 
 ```python
@@ -247,6 +268,19 @@ for i, mm_hash in enumerate(mm_hashes_list):
         self.encoder_cache[mm_hash] = mm_feature.detach().cpu()
 ```
 
+#### encoder_cache 生命周期与驱逐策略
+
+| 维度 | 说明 |
+|------|------|
+| **创建时机** | `GPUModelRunner.__init__()` 中，当 `cache_config.max_encoder_cache > 0` 时创建 |
+| **容量上限** | 由 `cache_config.max_encoder_cache` 配置，单位为缓存条目数 |
+| **写入时机** | 在 `_process_mm_features()` 中，首次提取视觉特征后写入 |
+| **存储位置** | 特征以 `detach().cpu()` 形式存储在 CPU 内存，使用时通过 `.cuda()` 转移到 GPU |
+| **缓存键** | `mm_hash`，基于多模态内容的哈希值，相同图像的哈希值相同 |
+| **驱逐策略** | 当缓存条目数达到 `max_encoder_cache` 时，按 FIFO 顺序驱逐最早的条目 |
+| **清理时机** | 调用 `clear_requests()` 或 `clear_cache()` 时统一清理 |
+| **跨请求复用** | 不同请求引用相同图像时，通过 `mm_hash` 匹配复用已缓存的特征，避免重复视觉编码 |
+
 ### 5. 模型前向传播
 
 根据是否启用多模态，使用不同的调用签名：
@@ -296,11 +330,16 @@ else:
 
 ## 注意事项
 
-1. **V0 vs V1 调度**：多模态特征处理逻辑在不同调度版本中有差异
-   - V0 调度：在 `_process_mm_features()` 中批量处理
-   - V1 调度：在 `_prepare_inputs()` 中合并 `image_features_list`
+1. **V0 vs V1 调度**：多模态特征处理在 V0 和 V1 调度中均会执行，但处理时机和方式有差异
+   - **特征提取阶段**（两种调度器均在任务插入时完成）：
+     - V0 调度：在 `insert_prefill_inputs()` 中调用 `_process_mm_features()` 批量提取并缓存视觉特征
+     - V1 调度：在 `insert_tasks_v1()` 末尾调用 `_process_mm_features()` 提取并缓存视觉特征
+   - **特征拼接阶段**（在模型执行前完成，只读取已缓存的特征，不重新提取）：
+     - V0 调度：在 `_process_mm_features()` 中直接拼接 `image_features`
+     - V1 调度：在 `_prepare_inputs()` 中从 `image_features_list` 合并为 `image_features`
+   - **为什么处理时机不同**：V1 调度器同时处理 prefill 和 decode 任务，需要先收集所有特征再统一拼接；V0 调度器主要处理 prefill，可以在插入时直接处理
 
-2. **编码器缓存**：当 `max_encoder_cache > 0` 时启用，可显著提升重复图像的处理效率
+2. **编码器缓存**：当 `max_encoder_cache > 0` 时启用，可显著提升重复图像的处理效率。缓存存储在 CPU 内存，使用时转移到 GPU。详见上文"编码器缓存"章节
 
 3. **RoPE3D 位置编码**：多模态模型需要 3D 旋转位置编码来处理图像 patch 的空间位置信息
 
