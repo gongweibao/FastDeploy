@@ -1116,6 +1116,7 @@ class GPUModelRunner(ModelRunnerBase):
 
             self.sampler.apply_logits_processor(idx, logits_info, prefill_tokens)
 
+        self.exist_prefill_flag = True
         set_stop(self.share_inputs["not_need_stop"], True)
 
         self.share_inputs["seq_lens_this_time"] = self.share_inputs["seq_lens_this_time_buffer"][:num_running_requests]
